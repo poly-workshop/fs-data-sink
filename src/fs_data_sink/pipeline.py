@@ -191,7 +191,7 @@ class DataPipeline:
                                 logger.info("Reached max batches limit: %d", max_batches)
                                 break
 
-                    except Exception as e:
+                    except (IOError, OSError, ValueError, RuntimeError) as e:
                         errors_encountered.add(
                             1,
                             {"source": self.settings.source.type, "sink": self.settings.sink.type},

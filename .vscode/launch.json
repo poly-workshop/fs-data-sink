@@ -1,0 +1,15 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "FS Data Sink: CLI",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "fs_data_sink.cli",
+      "args": ["--config", "${workspaceFolder}/config/example-redis-to-local.ini"],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "envFile": "${workspaceFolder}/.env"
+    }
+  ]
+}
