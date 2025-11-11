@@ -1,0 +1,102 @@
+version: '3.8'
+
+services:
+  # Kafka and Zookeeper for testing
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+
+  # Redis for testing
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+
+  # LocalStack for S3 testing
+  localstack:
+    image: localstack/localstack:latest
+    ports:
+      - "4566:4566"
+      - "4571:4571"
+    environment:
+      SERVICES: s3
+      DEBUG: 1
+      DATA_DIR: /tmp/localstack/data
+      AWS_DEFAULT_REGION: us-east-1
+    volumes:
+      - localstack-data:/tmp/localstack
+
+  # OpenTelemetry Collector (optional)
+  otel-collector:
+    image: otel/opentelemetry-collector:latest
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    ports:
+      - "4317:4317"   # OTLP gRPC receiver
+      - "4318:4318"   # OTLP HTTP receiver
+      - "8889:8889"   # Prometheus exporter metrics
+    profiles:
+      - telemetry
+
+  # Kafka Producer Example (for testing)
+  kafka-producer:
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on:
+      - kafka
+    command: >
+      bash -c "
+        echo 'Waiting for Kafka to be ready...'
+        cub kafka-ready -b kafka:9092 1 30
+        echo 'Creating test topic...'
+        kafka-topics --create --if-not-exists --bootstrap-server kafka:9092 --topic test-topic --partitions 1 --replication-factor 1
+        echo 'Producing test messages...'
+        for i in {1..100}; do
+          echo '{\"id\":'\$$i',\"message\":\"Test message '\$$i'\",\"timestamp\":\"'$$(date -u +%Y-%m-%dT%H:%M:%SZ)'\"}' | kafka-console-producer --bootstrap-server kafka:9092 --topic test-topic
+          sleep 0.1
+        done
+        echo 'Done producing messages'
+      "
+    profiles:
+      - producer
+
+  # Redis Producer Example (for testing)
+  redis-producer:
+    image: redis:7-alpine
+    depends_on:
+      - redis
+    command: >
+      sh -c "
+        echo 'Waiting for Redis to be ready...'
+        sleep 3
+        echo 'Producing test messages to stream...'
+        for i in 1 2 3 4 5 6 7 8 9 10; do
+          redis-cli -h redis -p 6379 XADD test-stream '*' value '{\"id\":'\$$i',\"message\":\"Test message '\$$i'\",\"timestamp\":\"'$$(date -u +%Y-%m-%dT%H:%M:%SZ)'\"}'
+          sleep 0.1
+        done
+        echo 'Done producing messages'
+      "
+    profiles:
+      - producer
+
+volumes:
+  localstack-data:

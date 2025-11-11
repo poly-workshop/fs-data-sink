@@ -1,0 +1,34 @@
+# Example configuration: Redis to HDFS
+source:
+  type: redis
+  host: localhost
+  port: 6379
+  db: 0
+  # password: optional
+  stream_keys:
+    - data-stream-1
+    - data-stream-2
+  # list_keys:
+  #   - data-list-1
+  value_format: json  # or arrow_ipc
+  batch_size: 1000
+
+sink:
+  type: hdfs
+  url: http://namenode:9870
+  base_path: /data/raw
+  user: hdfs
+  compression: snappy  # snappy, gzip, brotli, zstd, none
+  partition_by:
+    - date
+
+telemetry:
+  log_level: INFO
+  log_format: text  # json or text
+  enabled: false
+  service_name: fs-data-sink
+
+pipeline:
+  max_batches: null
+  batch_timeout_seconds: 30
+  error_handling: log
