@@ -6,24 +6,21 @@ import tempfile
 from fs_data_sink.config import load_config
 
 
-def test_load_config_from_yaml():
-    """Test loading configuration from YAML file."""
-    config_content = """
-source:
-  type: kafka
-  bootstrap_servers:
-    - localhost:9092
-  topics:
-    - test-topic
-  group_id: test-group
+def test_load_config_from_ini():
+    """Test loading configuration from INI file."""
+    config_content = """[source]
+type = kafka
+bootstrap_servers = localhost:9092
+topics = test-topic
+group_id = test-group
 
-sink:
-  type: s3
-  bucket: test-bucket
-  region_name: us-west-2
+[sink]
+type = s3
+bucket = test-bucket
+region_name = us-west-2
 """
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".ini", delete=False) as f:
         f.write(config_content)
         config_path = f.name
 
@@ -45,18 +42,16 @@ sink:
 
 def test_load_config_with_env_overrides(monkeypatch):
     """Test that environment variables override config file."""
-    config_content = """
-source:
-  type: kafka
-  bootstrap_servers:
-    - localhost:9092
+    config_content = """[source]
+type = kafka
+bootstrap_servers = localhost:9092
 
-sink:
-  type: s3
-  bucket: original-bucket
+[sink]
+type = s3
+bucket = original-bucket
 """
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".ini", delete=False) as f:
         f.write(config_content)
         config_path = f.name
 
@@ -77,20 +72,17 @@ sink:
 
 def test_default_values():
     """Test default configuration values."""
-    config_content = """
-source:
-  type: kafka
-  bootstrap_servers:
-    - localhost:9092
-  topics:
-    - test
+    config_content = """[source]
+type = kafka
+bootstrap_servers = localhost:9092
+topics = test
 
-sink:
-  type: s3
-  bucket: test
+[sink]
+type = s3
+bucket = test
 """
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".ini", delete=False) as f:
         f.write(config_content)
         config_path = f.name
 

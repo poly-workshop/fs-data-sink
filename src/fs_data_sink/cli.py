@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 )
 @click.option(
     "--sink-type",
-    type=click.Choice(["s3", "hdfs"]),
+    type=click.Choice(["s3", "hdfs", "local"]),
     help="Data sink type",
 )
 @click.option(

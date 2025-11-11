@@ -37,7 +37,7 @@ class SourceConfig:
 class SinkConfig:
     """Configuration for data sinks."""
 
-    type: str  # 's3' or 'hdfs'
+    type: str  # 's3', 'hdfs', or 'local'
 
     # S3 specific
     bucket: Optional[str] = None
@@ -45,9 +45,12 @@ class SinkConfig:
     aws_access_key_id: Optional[str] = None
     aws_secret_access_key: Optional[str] = None
     region_name: str = "us-east-1"
+    endpoint_url: Optional[str] = None
 
     # HDFS specific
     url: Optional[str] = None
+
+    # Local and HDFS specific
     base_path: Optional[str] = None
     user: Optional[str] = None
 

@@ -30,6 +30,7 @@ class S3Sink(DataSink):
         aws_access_key_id: Optional[str] = None,
         aws_secret_access_key: Optional[str] = None,
         region_name: str = "us-east-1",
+        endpoint_url: Optional[str] = None,
         compression: str = "snappy",
         partition_by: Optional[list[str]] = None,
         s3_config: Optional[dict] = None,
@@ -43,6 +44,7 @@ class S3Sink(DataSink):
             aws_access_key_id: AWS access key (optional, can use IAM role)
             aws_secret_access_key: AWS secret key (optional, can use IAM role)
             region_name: AWS region
+            endpoint_url: S3 endpoint URL (optional, for S3-compatible services like MinIO)
             compression: Compression codec for Parquet ('snappy', 'gzip', 'brotli', 'zstd', 'none')
             partition_by: List of column names to partition by
             s3_config: Additional S3 client configuration
@@ -52,6 +54,7 @@ class S3Sink(DataSink):
         self.aws_access_key_id = aws_access_key_id
         self.aws_secret_access_key = aws_secret_access_key
         self.region_name = region_name
+        self.endpoint_url = endpoint_url
         self.compression = compression
         self.partition_by = partition_by or []
         self.s3_config = s3_config or {}
@@ -71,6 +74,9 @@ class S3Sink(DataSink):
             if self.aws_access_key_id and self.aws_secret_access_key:
                 session_config["aws_access_key_id"] = self.aws_access_key_id
                 session_config["aws_secret_access_key"] = self.aws_secret_access_key
+
+            if self.endpoint_url:
+                session_config["endpoint_url"] = self.endpoint_url
 
             self.s3_client = boto3.client("s3", **session_config)
 

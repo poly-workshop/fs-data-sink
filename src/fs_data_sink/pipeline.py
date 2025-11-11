@@ -6,7 +6,7 @@ from typing import Optional
 from opentelemetry import metrics, trace
 
 from fs_data_sink.config import Settings
-from fs_data_sink.sinks import HDFSSink, S3Sink
+from fs_data_sink.sinks import HDFSSink, LocalSink, S3Sink
 from fs_data_sink.sources import KafkaSource, RedisSource
 from fs_data_sink.types import DataSink, DataSource
 
@@ -92,6 +92,7 @@ class DataPipeline:
                 aws_access_key_id=sink_config.aws_access_key_id,
                 aws_secret_access_key=sink_config.aws_secret_access_key,
                 region_name=sink_config.region_name,
+                endpoint_url=sink_config.endpoint_url,
                 compression=sink_config.compression,
                 partition_by=sink_config.partition_by,
                 s3_config=sink_config.extra_config,
@@ -108,6 +109,16 @@ class DataPipeline:
                 compression=sink_config.compression,
                 partition_by=sink_config.partition_by,
                 hdfs_config=sink_config.extra_config,
+            )
+
+        if sink_config.type == "local":
+            if not sink_config.base_path:
+                raise ValueError("Local sink requires base_path")
+
+            return LocalSink(
+                base_path=sink_config.base_path,
+                compression=sink_config.compression,
+                partition_by=sink_config.partition_by,
             )
 
         raise ValueError(f"Unsupported sink type: {sink_config.type}")
