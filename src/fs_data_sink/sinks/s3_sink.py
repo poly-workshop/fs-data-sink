@@ -2,11 +2,12 @@
 
 import logging
 from datetime import datetime
+from io import BytesIO
 from typing import Optional
+
 import pyarrow as pa
 import pyarrow.parquet as pq
 import boto3
-from io import BytesIO
 from opentelemetry import trace
 
 from fs_data_sink.types import DataSink
@@ -18,7 +19,7 @@ tracer = trace.get_tracer(__name__)
 class S3Sink(DataSink):
     """
     S3 data sink that writes Arrow data to S3 in Parquet format.
-    
+
     Supports partitioning and compression for efficient analytics.
     """
 
@@ -35,7 +36,7 @@ class S3Sink(DataSink):
     ):
         """
         Initialize S3 sink.
-        
+
         Args:
             bucket: S3 bucket name
             prefix: Prefix (folder) for objects in the bucket
@@ -61,18 +62,18 @@ class S3Sink(DataSink):
         """Establish connection to S3."""
         with tracer.start_as_current_span("s3_connect"):
             logger.info("Connecting to S3: bucket=%s, region=%s", self.bucket, self.region_name)
-            
+
             session_config = {
                 "region_name": self.region_name,
                 **self.s3_config,
             }
-            
+
             if self.aws_access_key_id and self.aws_secret_access_key:
                 session_config["aws_access_key_id"] = self.aws_access_key_id
                 session_config["aws_secret_access_key"] = self.aws_secret_access_key
-            
+
             self.s3_client = boto3.client("s3", **session_config)
-            
+
             # Test connection by checking if bucket exists
             try:
                 self.s3_client.head_bucket(Bucket=self.bucket)
@@ -81,10 +82,12 @@ class S3Sink(DataSink):
                 logger.error("Failed to access S3 bucket: %s", e)
                 raise
 
-    def write_batch(self, batch: pa.RecordBatch, partition_cols: Optional[list[str]] = None) -> None:
+    def write_batch(
+        self, batch: pa.RecordBatch, partition_cols: Optional[list[str]] = None
+    ) -> None:
         """
         Write a batch of data to S3.
-        
+
         Args:
             batch: Arrow RecordBatch to write
             partition_cols: Optional list of column names to use for partitioning
@@ -96,17 +99,17 @@ class S3Sink(DataSink):
             try:
                 # Use provided partition columns or default
                 parts = partition_cols or self.partition_by
-                
+
                 # Convert batch to table
                 table = pa.Table.from_batches([batch])
-                
+
                 # Generate S3 key with timestamp and counter
                 timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
                 self.file_counter += 1
-                
+
                 # Build path with partitions
                 path_parts = [self.prefix] if self.prefix else []
-                
+
                 if parts and table.num_rows > 0:
                     # Create partition directories
                     for col in parts:
@@ -114,10 +117,10 @@ class S3Sink(DataSink):
                             # Get first value for partition (simple partitioning)
                             val = table[col][0].as_py()
                             path_parts.append(f"{col}={val}")
-                
+
                 path_parts.append(f"data_{timestamp}_{self.file_counter:06d}.parquet")
                 s3_key = "/".join(path_parts)
-                
+
                 # Write to buffer
                 buffer = BytesIO()
                 pq.write_table(
@@ -127,7 +130,7 @@ class S3Sink(DataSink):
                     use_dictionary=True,
                     version="2.6",
                 )
-                
+
                 # Upload to S3
                 buffer.seek(0)
                 self.s3_client.put_object(
@@ -135,12 +138,12 @@ class S3Sink(DataSink):
                     Key=s3_key,
                     Body=buffer.getvalue(),
                 )
-                
+
                 logger.info(
                     "Wrote batch to S3: s3://%s/%s (%d rows, %d bytes)",
                     self.bucket, s3_key, table.num_rows, buffer.tell()
                 )
-                
+
             except Exception as e:
                 logger.error("Error writing batch to S3: %s", e, exc_info=True)
                 raise

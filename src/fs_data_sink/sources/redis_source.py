@@ -2,7 +2,6 @@
 
 import json
 import logging
-import time
 from typing import Iterator, Optional
 import pyarrow as pa
 import redis
@@ -17,7 +16,7 @@ tracer = trace.get_tracer(__name__)
 class RedisSource(DataSource):
     """
     Redis data source that reads Arrow data from Redis streams or lists.
-    
+
     Supports Redis Streams (XREAD) and Lists (BLPOP) as data sources.
     """
 
@@ -35,7 +34,7 @@ class RedisSource(DataSource):
     ):
         """
         Initialize Redis source.
-        
+
         Args:
             host: Redis host
             port: Redis port
@@ -62,8 +61,11 @@ class RedisSource(DataSource):
     def connect(self) -> None:
         """Establish connection to Redis."""
         with tracer.start_as_current_span("redis_connect"):
-            logger.info("Connecting to Redis: host=%s, port=%s, db=%s", self.host, self.port, self.db)
-            
+            logger.info(
+                "Connecting to Redis: host=%s, port=%s, db=%s",
+                self.host, self.port, self.db
+            )
+
             self.client = redis.Redis(
                 host=self.host,
                 port=self.port,
@@ -72,7 +74,7 @@ class RedisSource(DataSource):
                 decode_responses=False,  # Keep as bytes for Arrow IPC
                 **self.redis_config,
             )
-            
+
             # Test connection
             self.client.ping()
             logger.info("Successfully connected to Redis")
@@ -80,10 +82,10 @@ class RedisSource(DataSource):
     def read_batch(self, batch_size: int = 1000) -> Iterator[pa.RecordBatch]:
         """
         Read data batches from Redis.
-        
+
         Args:
             batch_size: Number of messages to accumulate per batch
-            
+
         Yields:
             Arrow RecordBatch containing the data
         """
@@ -92,15 +94,15 @@ class RedisSource(DataSource):
 
         with tracer.start_as_current_span("redis_read_batch"):
             messages = []
-            
+
             # Read from streams if configured
             if self.stream_keys:
                 messages.extend(self._read_from_streams(batch_size))
-            
+
             # Read from lists if configured
             if self.list_keys:
                 messages.extend(self._read_from_lists(batch_size - len(messages)))
-            
+
             if messages:
                 if self.value_format == "json":
                     batch = self._json_to_arrow_batch(messages)
@@ -111,72 +113,73 @@ class RedisSource(DataSource):
                     for msg in messages:
                         try:
                             reader = pa.ipc.open_stream(msg)
-                            for batch in reader:
-                                yield batch
+                            yield from reader
                         except Exception as e:
                             logger.error("Error processing Arrow IPC message: %s", e)
 
     def _read_from_streams(self, batch_size: int) -> list:
         """Read messages from Redis streams."""
         messages = []
-        
+
         try:
             # Prepare stream IDs for XREAD
             streams = {key: self.stream_ids[key] for key in self.stream_keys}
-            
+
             # Read from all streams
             results = self.client.xread(
                 streams=streams,
                 count=batch_size,
                 block=self.block_timeout
             )
-            
+
             if results:
                 for stream_key, stream_messages in results:
                     for msg_id, msg_data in stream_messages:
                         # Update last read ID
-                        self.stream_ids[stream_key.decode() if isinstance(stream_key, bytes) else stream_key] = msg_id.decode() if isinstance(msg_id, bytes) else msg_id
-                        
+                        key = stream_key.decode() if isinstance(stream_key, bytes) else stream_key
+                        msg_id_str = msg_id.decode() if isinstance(msg_id, bytes) else msg_id
+                        self.stream_ids[key] = msg_id_str
+
                         # Extract message value
                         if b'value' in msg_data:
                             messages.append(msg_data[b'value'])
                         elif 'value' in msg_data:
                             messages.append(msg_data['value'])
-                            
+
         except Exception as e:
             logger.error("Error reading from Redis streams: %s", e, exc_info=True)
-        
+
         return messages
 
     def _read_from_lists(self, batch_size: int) -> list:
         """Read messages from Redis lists."""
         messages = []
-        
+
         try:
             for _ in range(batch_size):
                 if not self.list_keys:
                     break
-                    
+
                 result = self.client.blpop(
                     self.list_keys,
                     timeout=self.block_timeout // 1000  # Convert to seconds
                 )
-                
+
                 if result:
                     _, value = result
                     messages.append(value)
                 else:
                     break  # Timeout, no more messages
-                    
+
         except Exception as e:
             logger.error("Error reading from Redis lists: %s", e, exc_info=True)
-        
+
         return messages
 
     def _json_to_arrow_batch(self, messages: list) -> pa.RecordBatch:
         """Convert a list of JSON messages to Arrow RecordBatch."""
         parsed_messages = []
-        
+
         for msg in messages:
             try:
                 if isinstance(msg, bytes):
@@ -186,11 +189,13 @@ class RedisSource(DataSource):
                 parsed_messages.append(data)
             except Exception as e:
                 logger.error("Error parsing JSON message: %s", e)
-        
+
         if parsed_messages:
             table = pa.Table.from_pylist(parsed_messages)
-            return table.to_batches()[0] if table.num_rows > 0 else pa.record_batch([], schema=pa.schema([]))
-        
+            if table.num_rows > 0:
+                return table.to_batches()[0]
+            return pa.record_batch([], schema=pa.schema([]))
+
         return pa.record_batch([], schema=pa.schema([]))
 
     def close(self) -> None:

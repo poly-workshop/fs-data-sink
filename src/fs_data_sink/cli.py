@@ -1,8 +1,9 @@
 """Command-line interface for fs-data-sink."""
 
-import sys
-import click
 import logging
+import sys
+
+import click
 
 from fs_data_sink.config import load_config
 from fs_data_sink.telemetry import setup_telemetry
@@ -42,21 +43,21 @@ logger = logging.getLogger(__name__)
 def main(config, source_type, sink_type, log_level, max_batches):
     """
     FS Data Sink - Apache Arrow data pipeline from Kafka/Redis to HDFS/S3.
-    
+
     This tool reads Apache Arrow data from Kafka or Redis and writes it to
     HDFS or S3 in Parquet format for analytics consumption.
-    
+
     Configuration can be provided via:
     - YAML configuration file (--config)
     - Environment variables
     - Command-line options
-    
+
     Environment variables take precedence over config file values.
     """
     try:
         # Load configuration
         settings = load_config(config)
-        
+
         # Override with CLI options
         if source_type:
             settings.source.type = source_type
@@ -66,10 +67,10 @@ def main(config, source_type, sink_type, log_level, max_batches):
             settings.telemetry.log_level = log_level
         if max_batches:
             settings.pipeline.max_batches = max_batches
-        
+
         # Setup telemetry
         setup_telemetry(settings.telemetry)
-        
+
         logger.info("="*60)
         logger.info("Starting FS Data Sink")
         logger.info("="*60)
@@ -77,21 +78,21 @@ def main(config, source_type, sink_type, log_level, max_batches):
         logger.info("Sink: %s", settings.sink.type)
         logger.info("Compression: %s", settings.sink.compression)
         logger.info("="*60)
-        
+
         # Create and run pipeline
         pipeline = DataPipeline(settings)
         pipeline.run()
-        
+
         logger.info("="*60)
         logger.info("FS Data Sink completed successfully")
         logger.info("="*60)
-        
+
         sys.exit(0)
-        
+
     except KeyboardInterrupt:
         logger.info("Pipeline interrupted by user")
         sys.exit(130)
-    
+
     except Exception as e:
         logger.error("Pipeline failed: %s", e, exc_info=True)
         sys.exit(1)

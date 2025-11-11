@@ -16,7 +16,7 @@ tracer = trace.get_tracer(__name__)
 class KafkaSource(DataSource):
     """
     Kafka data source that reads Arrow data from Kafka topics.
-    
+
     Supports both JSON messages (auto-converted to Arrow) and Arrow IPC format.
     """
 
@@ -32,7 +32,7 @@ class KafkaSource(DataSource):
     ):
         """
         Initialize Kafka source.
-        
+
         Args:
             bootstrap_servers: List of Kafka broker addresses
             topics: List of topics to consume from
@@ -58,7 +58,7 @@ class KafkaSource(DataSource):
                 f"Connecting to Kafka: servers={self.bootstrap_servers}, "
                 f"topics={self.topics}, group_id={self.group_id}"
             )
-            
+
             config = {
                 "bootstrap_servers": self.bootstrap_servers,
                 "group_id": self.group_id,
@@ -66,17 +66,17 @@ class KafkaSource(DataSource):
                 "enable_auto_commit": self.enable_auto_commit,
                 **self.consumer_config,
             }
-            
+
             self.consumer = KafkaConsumer(*self.topics, **config)
             logger.info("Successfully connected to Kafka")
 
     def read_batch(self, batch_size: int = 1000) -> Iterator[pa.RecordBatch]:
         """
         Read data batches from Kafka.
-        
+
         Args:
             batch_size: Number of messages to accumulate per batch
-            
+
         Yields:
             Arrow RecordBatch containing the data
         """
@@ -85,7 +85,7 @@ class KafkaSource(DataSource):
 
         with tracer.start_as_current_span("kafka_read_batch"):
             messages = []
-            
+
             for message in self.consumer:
                 with tracer.start_as_current_span("kafka_process_message"):
                     try:
@@ -100,7 +100,7 @@ class KafkaSource(DataSource):
                             continue
                         else:
                             raise ValueError(f"Unsupported value format: {self.value_format}")
-                        
+
                         if len(messages) >= batch_size:
                             # Convert accumulated JSON messages to Arrow RecordBatch
                             if messages:
@@ -108,11 +108,11 @@ class KafkaSource(DataSource):
                                 logger.debug("Created batch with %d records", len(messages))
                                 yield batch
                                 messages = []
-                                
+
                     except Exception as e:
                         logger.error("Error processing message: %s", e, exc_info=True)
                         continue
-            
+
             # Yield remaining messages
             if messages:
                 batch = self._json_to_arrow_batch(messages)
@@ -124,7 +124,9 @@ class KafkaSource(DataSource):
         # Create a table from the list of dictionaries
         table = pa.Table.from_pylist(messages)
         # Convert to a single batch
-        return table.to_batches()[0] if table.num_rows > 0 else pa.record_batch([], schema=pa.schema([]))
+        if table.num_rows > 0:
+            return table.to_batches()[0]
+        return pa.record_batch([], schema=pa.schema([]))
 
     def close(self) -> None:
         """Close the Kafka consumer."""
