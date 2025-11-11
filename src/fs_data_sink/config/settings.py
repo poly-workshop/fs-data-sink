@@ -1,9 +1,9 @@
 """Configuration settings for the data pipeline."""
 
 import os
+from configparser import ConfigParser
 from dataclasses import dataclass, field
 from typing import Optional
-import yaml
 from dotenv import load_dotenv
 
 
@@ -85,14 +85,75 @@ class Settings:
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)
 
 
+def _load_ini_file(config_path: str) -> dict:
+    """
+    Load configuration from INI file.
+
+    Args:
+        config_path: Path to INI configuration file
+
+    Returns:
+        Dictionary with configuration data
+    """
+    config = ConfigParser()
+    config.read(config_path, encoding="utf-8")
+
+    config_data = {"source": {}, "sink": {}, "telemetry": {}, "pipeline": {}}
+
+    # Load source section
+    if config.has_section("source"):
+        for key, value in config.items("source"):
+            # Handle list values (comma-separated)
+            if key in ("bootstrap_servers", "topics", "stream_keys", "list_keys", "partition_by"):
+                config_data["source"][key] = [v.strip() for v in value.split(",") if v.strip()]
+            # Handle integer values
+            elif key in ("port", "db", "batch_size"):
+                config_data["source"][key] = config.getint("source", key)
+            else:
+                config_data["source"][key] = value
+
+    # Load sink section
+    if config.has_section("sink"):
+        for key, value in config.items("sink"):
+            # Handle list values
+            if key in ("partition_by",):
+                config_data["sink"][key] = [v.strip() for v in value.split(",") if v.strip()]
+            else:
+                config_data["sink"][key] = value
+
+    # Load telemetry section
+    if config.has_section("telemetry"):
+        for key, value in config.items("telemetry"):
+            # Handle boolean values
+            if key in ("enabled", "trace_enabled", "metrics_enabled"):
+                config_data["telemetry"][key] = config.getboolean("telemetry", key)
+            else:
+                config_data["telemetry"][key] = value
+
+    # Load pipeline section
+    if config.has_section("pipeline"):
+        for key, value in config.items("pipeline"):
+            # Handle integer values
+            if key in ("max_batches", "batch_timeout_seconds"):
+                # Handle null/None for max_batches
+                if value.lower() in ("null", "none", ""):
+                    config_data["pipeline"][key] = None
+                else:
+                    config_data["pipeline"][key] = config.getint("pipeline", key)
+            else:
+                config_data["pipeline"][key] = value
+
+    return config_data
+
+
 def load_config(config_path: Optional[str] = None) -> Settings:
     """
-    Load configuration from YAML file and environment variables.
+    Load configuration from INI file and environment variables.
 
     Environment variables take precedence over file configuration.
 
     Args:
-        config_path: Path to YAML configuration file
+        config_path: Path to INI configuration file
 
     Returns:
         Settings object with complete configuration
@@ -100,11 +161,10 @@ def load_config(config_path: Optional[str] = None) -> Settings:
     # Load environment variables
     load_dotenv()
 
-    # Load from YAML file if provided
+    # Load from INI file if provided
     config_data = {}
     if config_path and os.path.exists(config_path):
-        with open(config_path, "r", encoding="utf-8") as f:
-            config_data = yaml.safe_load(f) or {}
+        config_data = _load_ini_file(config_path)
 
     # Override with environment variables
     _apply_env_overrides(config_data)

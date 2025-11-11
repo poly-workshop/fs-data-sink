@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
     "--config",
     "-c",
     type=click.Path(exists=True),
-    help="Path to configuration file (YAML)",
+    help="Path to configuration file (INI format)",
 )
 @click.option(
     "--source-type",
@@ -48,7 +48,7 @@ def main(config, source_type, sink_type, log_level, max_batches):
     HDFS or S3 in Parquet format for analytics consumption.
 
     Configuration can be provided via:
-    - YAML configuration file (--config)
+    - INI configuration file (--config)
     - Environment variables
     - Command-line options
 
