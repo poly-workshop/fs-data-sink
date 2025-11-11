@@ -1,11 +1,11 @@
 """Configuration management."""
 
 from fs_data_sink.config.settings import (
-    Settings,
-    SourceConfig,
-    SinkConfig,
-    TelemetryConfig,
     PipelineConfig,
+    Settings,
+    SinkConfig,
+    SourceConfig,
+    TelemetryConfig,
     load_config,
 )
 

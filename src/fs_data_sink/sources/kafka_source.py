@@ -3,6 +3,7 @@
 import json
 import logging
 from typing import Iterator, Optional
+
 import pyarrow as pa
 from kafka import KafkaConsumer
 from opentelemetry import trace

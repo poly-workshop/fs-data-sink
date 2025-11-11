@@ -5,9 +5,9 @@ from datetime import datetime
 from io import BytesIO
 from typing import Optional
 
+import boto3
 import pyarrow as pa
 import pyarrow.parquet as pq
-import boto3
 from opentelemetry import trace
 
 from fs_data_sink.types import DataSink
@@ -141,7 +141,10 @@ class S3Sink(DataSink):
 
                 logger.info(
                     "Wrote batch to S3: s3://%s/%s (%d rows, %d bytes)",
-                    self.bucket, s3_key, table.num_rows, buffer.tell()
+                    self.bucket,
+                    s3_key,
+                    table.num_rows,
+                    buffer.tell(),
                 )
 
             except Exception as e:

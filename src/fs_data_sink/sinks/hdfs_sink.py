@@ -141,7 +141,9 @@ class HDFSSink(DataSink):
 
                 logger.info(
                     "Wrote batch to HDFS: %s (%d rows, %d bytes)",
-                    hdfs_path, table.num_rows, buffer.tell()
+                    hdfs_path,
+                    table.num_rows,
+                    buffer.tell(),
                 )
 
             except Exception as e:

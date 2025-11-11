@@ -6,8 +6,8 @@ import sys
 import click
 
 from fs_data_sink.config import load_config
-from fs_data_sink.telemetry import setup_telemetry
 from fs_data_sink.pipeline import DataPipeline
+from fs_data_sink.telemetry import setup_telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -71,21 +71,21 @@ def main(config, source_type, sink_type, log_level, max_batches):
         # Setup telemetry
         setup_telemetry(settings.telemetry)
 
-        logger.info("="*60)
+        logger.info("=" * 60)
         logger.info("Starting FS Data Sink")
-        logger.info("="*60)
+        logger.info("=" * 60)
         logger.info("Source: %s", settings.source.type)
         logger.info("Sink: %s", settings.sink.type)
         logger.info("Compression: %s", settings.sink.compression)
-        logger.info("="*60)
+        logger.info("=" * 60)
 
         # Create and run pipeline
         pipeline = DataPipeline(settings)
         pipeline.run()
 
-        logger.info("="*60)
+        logger.info("=" * 60)
         logger.info("FS Data Sink completed successfully")
-        logger.info("="*60)
+        logger.info("=" * 60)
 
         sys.exit(0)
 

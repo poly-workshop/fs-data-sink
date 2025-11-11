@@ -4,12 +4,14 @@ import os
 from configparser import ConfigParser
 from dataclasses import dataclass, field
 from typing import Optional
+
 from dotenv import load_dotenv
 
 
 @dataclass
 class SourceConfig:
     """Configuration for data sources."""
+
     type: str  # 'kafka' or 'redis'
 
     # Kafka specific
@@ -34,6 +36,7 @@ class SourceConfig:
 @dataclass
 class SinkConfig:
     """Configuration for data sinks."""
+
     type: str  # 's3' or 'hdfs'
 
     # S3 specific
@@ -57,6 +60,7 @@ class SinkConfig:
 @dataclass
 class TelemetryConfig:
     """Configuration for telemetry (logging and metrics)."""
+
     log_level: str = "INFO"
     log_format: str = "json"
 
@@ -71,6 +75,7 @@ class TelemetryConfig:
 @dataclass
 class PipelineConfig:
     """Configuration for the pipeline behavior."""
+
     max_batches: Optional[int] = None
     batch_timeout_seconds: int = 30
     error_handling: str = "log"  # 'log', 'raise', or 'ignore'
@@ -79,6 +84,7 @@ class PipelineConfig:
 @dataclass
 class Settings:
     """Complete settings for the data pipeline."""
+
     source: SourceConfig
     sink: SinkConfig
     telemetry: TelemetryConfig = field(default_factory=TelemetryConfig)

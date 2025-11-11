@@ -2,12 +2,13 @@
 
 import logging
 from typing import Optional
-from opentelemetry import trace, metrics
 
-from fs_data_sink.types import DataSource, DataSink
-from fs_data_sink.sources import KafkaSource, RedisSource
-from fs_data_sink.sinks import HDFSSink, S3Sink
+from opentelemetry import metrics, trace
+
 from fs_data_sink.config import Settings
+from fs_data_sink.sinks import HDFSSink, S3Sink
+from fs_data_sink.sources import KafkaSource, RedisSource
+from fs_data_sink.types import DataSink, DataSource
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -156,20 +157,22 @@ class DataPipeline:
                                 1,
                                 {
                                     "source": self.settings.source.type,
-                                    "sink": self.settings.sink.type
-                                }
+                                    "sink": self.settings.sink.type,
+                                },
                             )
                             records_processed.add(
                                 num_rows,
                                 {
                                     "source": self.settings.source.type,
-                                    "sink": self.settings.sink.type
-                                }
+                                    "sink": self.settings.sink.type,
+                                },
                             )
 
                             logger.info(
                                 "Processed batch %d: %d records (total: %d records)",
-                                batch_count, num_rows, total_records
+                                batch_count,
+                                num_rows,
+                                total_records,
                             )
 
                             # Check if max batches reached
@@ -180,10 +183,7 @@ class DataPipeline:
                     except Exception as e:
                         errors_encountered.add(
                             1,
-                            {
-                                "source": self.settings.source.type,
-                                "sink": self.settings.sink.type
-                            }
+                            {"source": self.settings.source.type, "sink": self.settings.sink.type},
                         )
 
                         if self.settings.pipeline.error_handling == "raise":
@@ -197,8 +197,7 @@ class DataPipeline:
                 self.sink.flush()
 
                 logger.info(
-                    "Pipeline completed: %d batches, %d records",
-                    batch_count, total_records
+                    "Pipeline completed: %d batches, %d records", batch_count, total_records
                 )
                 span.set_attribute("pipeline.batches", batch_count)
                 span.set_attribute("pipeline.records", total_records)
@@ -206,11 +205,7 @@ class DataPipeline:
             except Exception as e:
                 logger.error("Pipeline failed: %s", e, exc_info=True)
                 errors_encountered.add(
-                    1,
-                    {
-                        "source": self.settings.source.type,
-                        "sink": self.settings.sink.type
-                    }
+                    1, {"source": self.settings.source.type, "sink": self.settings.sink.type}
                 )
                 raise
 

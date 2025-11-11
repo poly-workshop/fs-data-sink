@@ -3,6 +3,7 @@
 import json
 import logging
 from typing import Iterator, Optional
+
 import pyarrow as pa
 import redis
 from opentelemetry import trace
@@ -56,14 +57,13 @@ class RedisSource(DataSource):
         self.block_timeout = block_timeout
         self.redis_config = redis_config or {}
         self.client: Optional[redis.Redis] = None
-        self.stream_ids: dict[str, str] = {key: "0" for key in self.stream_keys}
+        self.stream_ids: dict[str, str] = dict.fromkeys(self.stream_keys, "0")
 
     def connect(self) -> None:
         """Establish connection to Redis."""
         with tracer.start_as_current_span("redis_connect"):
             logger.info(
-                "Connecting to Redis: host=%s, port=%s, db=%s",
-                self.host, self.port, self.db
+                "Connecting to Redis: host=%s, port=%s, db=%s", self.host, self.port, self.db
             )
 
             self.client = redis.Redis(
@@ -126,11 +126,7 @@ class RedisSource(DataSource):
             streams = {key: self.stream_ids[key] for key in self.stream_keys}
 
             # Read from all streams
-            results = self.client.xread(
-                streams=streams,
-                count=batch_size,
-                block=self.block_timeout
-            )
+            results = self.client.xread(streams=streams, count=batch_size, block=self.block_timeout)
 
             if results:
                 for stream_key, stream_messages in results:
@@ -141,10 +137,10 @@ class RedisSource(DataSource):
                         self.stream_ids[key] = msg_id_str
 
                         # Extract message value
-                        if b'value' in msg_data:
-                            messages.append(msg_data[b'value'])
-                        elif 'value' in msg_data:
-                            messages.append(msg_data['value'])
+                        if b"value" in msg_data:
+                            messages.append(msg_data[b"value"])
+                        elif "value" in msg_data:
+                            messages.append(msg_data["value"])
 
         except Exception as e:
             logger.error("Error reading from Redis streams: %s", e, exc_info=True)
@@ -161,8 +157,7 @@ class RedisSource(DataSource):
                     break
 
                 result = self.client.blpop(
-                    self.list_keys,
-                    timeout=self.block_timeout // 1000  # Convert to seconds
+                    self.list_keys, timeout=self.block_timeout // 1000  # Convert to seconds
                 )
 
                 if result:
