@@ -60,7 +60,7 @@ class S3Sink(DataSink):
     def connect(self) -> None:
         """Establish connection to S3."""
         with tracer.start_as_current_span("s3_connect"):
-            logger.info(f"Connecting to S3: bucket={self.bucket}, region={self.region_name}")
+            logger.info("Connecting to S3: bucket=%s, region=%s", self.bucket, self.region_name)
             
             session_config = {
                 "region_name": self.region_name,
@@ -78,7 +78,7 @@ class S3Sink(DataSink):
                 self.s3_client.head_bucket(Bucket=self.bucket)
                 logger.info("Successfully connected to S3")
             except Exception as e:
-                logger.error(f"Failed to access S3 bucket: {e}")
+                logger.error("Failed to access S3 bucket: %s", e)
                 raise
 
     def write_batch(self, batch: pa.RecordBatch, partition_cols: Optional[list[str]] = None) -> None:
@@ -137,12 +137,12 @@ class S3Sink(DataSink):
                 )
                 
                 logger.info(
-                    f"Wrote batch to S3: s3://{self.bucket}/{s3_key} "
-                    f"({table.num_rows} rows, {buffer.tell()} bytes)"
+                    "Wrote batch to S3: s3://%s/%s (%d rows, %d bytes)",
+                    self.bucket, s3_key, table.num_rows, buffer.tell()
                 )
                 
             except Exception as e:
-                logger.error(f"Error writing batch to S3: {e}", exc_info=True)
+                logger.error("Error writing batch to S3: %s", e, exc_info=True)
                 raise
 
     def flush(self) -> None:

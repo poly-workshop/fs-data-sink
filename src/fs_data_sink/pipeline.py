@@ -122,13 +122,13 @@ class DataPipeline:
         with tracer.start_as_current_span("pipeline_run") as span:
             try:
                 # Create and connect source
-                logger.info(f"Initializing {self.settings.source.type} source")
+                logger.info("Initializing %s source", self.settings.source.type)
                 self.source = self._create_source()
                 self.source.connect()
                 span.set_attribute("source.type", self.settings.source.type)
                 
                 # Create and connect sink
-                logger.info(f"Initializing {self.settings.sink.type} sink")
+                logger.info("Initializing %s sink", self.settings.sink.type)
                 self.sink = self._create_sink()
                 self.sink.connect()
                 span.set_attribute("sink.type", self.settings.sink.type)
@@ -156,13 +156,13 @@ class DataPipeline:
                             records_processed.add(num_rows, {"source": self.settings.source.type, "sink": self.settings.sink.type})
                             
                             logger.info(
-                                f"Processed batch {batch_count}: {num_rows} records "
-                                f"(total: {total_records} records)"
+                                "Processed batch %d: %d records (total: %d records)",
+                                batch_count, num_rows, total_records
                             )
                             
                             # Check if max batches reached
                             if max_batches and batch_count >= max_batches:
-                                logger.info(f"Reached max batches limit: {max_batches}")
+                                logger.info("Reached max batches limit: %d", max_batches)
                                 break
                     
                     except Exception as e:
@@ -171,7 +171,7 @@ class DataPipeline:
                         if self.settings.pipeline.error_handling == "raise":
                             raise
                         elif self.settings.pipeline.error_handling == "log":
-                            logger.error(f"Error processing batch: {e}", exc_info=True)
+                            logger.error("Error processing batch: %s", e, exc_info=True)
                         # else: ignore
                 
                 # Flush sink
@@ -179,13 +179,14 @@ class DataPipeline:
                 self.sink.flush()
                 
                 logger.info(
-                    f"Pipeline completed: {batch_count} batches, {total_records} records"
+                    "Pipeline completed: %d batches, %d records",
+                    batch_count, total_records
                 )
                 span.set_attribute("pipeline.batches", batch_count)
                 span.set_attribute("pipeline.records", total_records)
                 
             except Exception as e:
-                logger.error(f"Pipeline failed: {e}", exc_info=True)
+                logger.error("Pipeline failed: %s", e, exc_info=True)
                 errors_encountered.add(1, {"source": self.settings.source.type, "sink": self.settings.sink.type})
                 raise
             

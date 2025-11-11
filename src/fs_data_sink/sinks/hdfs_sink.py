@@ -54,7 +54,7 @@ class HDFSSink(DataSink):
     def connect(self) -> None:
         """Establish connection to HDFS."""
         with tracer.start_as_current_span("hdfs_connect"):
-            logger.info(f"Connecting to HDFS: url={self.url}, user={self.user}")
+            logger.info("Connecting to HDFS: url=%s, user=%s", self.url, self.user)
             
             client_config = {
                 "url": self.url,
@@ -71,11 +71,11 @@ class HDFSSink(DataSink):
                 # Check if base path exists, create if not
                 if not self.client.status(self.base_path, strict=False):
                     self.client.makedirs(self.base_path)
-                    logger.info(f"Created base path: {self.base_path}")
+                    logger.info("Created base path: %s", self.base_path)
                 
                 logger.info("Successfully connected to HDFS")
             except Exception as e:
-                logger.error(f"Failed to connect to HDFS: {e}")
+                logger.error("Failed to connect to HDFS: %s", e)
                 raise
 
     def write_batch(self, batch: pa.RecordBatch, partition_cols: Optional[list[str]] = None) -> None:
@@ -137,12 +137,12 @@ class HDFSSink(DataSink):
                     writer.write(buffer.getvalue())
                 
                 logger.info(
-                    f"Wrote batch to HDFS: {hdfs_path} "
-                    f"({table.num_rows} rows, {buffer.tell()} bytes)"
+                    "Wrote batch to HDFS: %s (%d rows, %d bytes)",
+                    hdfs_path, table.num_rows, buffer.tell()
                 )
                 
             except Exception as e:
-                logger.error(f"Error writing batch to HDFS: {e}", exc_info=True)
+                logger.error("Error writing batch to HDFS: %s", e, exc_info=True)
                 raise
 
     def flush(self) -> None:

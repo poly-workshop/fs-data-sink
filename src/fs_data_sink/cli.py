@@ -73,9 +73,9 @@ def main(config, source_type, sink_type, log_level, max_batches):
         logger.info("="*60)
         logger.info("Starting FS Data Sink")
         logger.info("="*60)
-        logger.info(f"Source: {settings.source.type}")
-        logger.info(f"Sink: {settings.sink.type}")
-        logger.info(f"Compression: {settings.sink.compression}")
+        logger.info("Source: %s", settings.source.type)
+        logger.info("Sink: %s", settings.sink.type)
+        logger.info("Compression: %s", settings.sink.compression)
         logger.info("="*60)
         
         # Create and run pipeline
@@ -93,7 +93,7 @@ def main(config, source_type, sink_type, log_level, max_batches):
         sys.exit(130)
     
     except Exception as e:
-        logger.error(f"Pipeline failed: {e}", exc_info=True)
+        logger.error("Pipeline failed: %s", e, exc_info=True)
         sys.exit(1)
 
 

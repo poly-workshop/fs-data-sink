@@ -62,7 +62,7 @@ class RedisSource(DataSource):
     def connect(self) -> None:
         """Establish connection to Redis."""
         with tracer.start_as_current_span("redis_connect"):
-            logger.info(f"Connecting to Redis: host={self.host}, port={self.port}, db={self.db}")
+            logger.info("Connecting to Redis: host=%s, port=%s, db=%s", self.host, self.port, self.db)
             
             self.client = redis.Redis(
                 host=self.host,
@@ -104,7 +104,7 @@ class RedisSource(DataSource):
             if messages:
                 if self.value_format == "json":
                     batch = self._json_to_arrow_batch(messages)
-                    logger.debug(f"Created batch with {len(messages)} records")
+                    logger.debug("Created batch with %d records", len(messages))
                     yield batch
                 elif self.value_format == "arrow_ipc":
                     # Process Arrow IPC messages
@@ -114,7 +114,7 @@ class RedisSource(DataSource):
                             for batch in reader:
                                 yield batch
                         except Exception as e:
-                            logger.error(f"Error processing Arrow IPC message: {e}")
+                            logger.error("Error processing Arrow IPC message: %s", e)
 
     def _read_from_streams(self, batch_size: int) -> list:
         """Read messages from Redis streams."""
@@ -144,7 +144,7 @@ class RedisSource(DataSource):
                             messages.append(msg_data['value'])
                             
         except Exception as e:
-            logger.error(f"Error reading from Redis streams: {e}", exc_info=True)
+            logger.error("Error reading from Redis streams: %s", e, exc_info=True)
         
         return messages
 
@@ -169,7 +169,7 @@ class RedisSource(DataSource):
                     break  # Timeout, no more messages
                     
         except Exception as e:
-            logger.error(f"Error reading from Redis lists: {e}", exc_info=True)
+            logger.error("Error reading from Redis lists: %s", e, exc_info=True)
         
         return messages
 
@@ -185,7 +185,7 @@ class RedisSource(DataSource):
                     data = json.loads(msg)
                 parsed_messages.append(data)
             except Exception as e:
-                logger.error(f"Error parsing JSON message: {e}")
+                logger.error("Error parsing JSON message: %s", e)
         
         if parsed_messages:
             table = pa.Table.from_pylist(parsed_messages)

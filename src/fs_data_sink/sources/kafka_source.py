@@ -105,18 +105,18 @@ class KafkaSource(DataSource):
                             # Convert accumulated JSON messages to Arrow RecordBatch
                             if messages:
                                 batch = self._json_to_arrow_batch(messages)
-                                logger.debug(f"Created batch with {len(messages)} records")
+                                logger.debug("Created batch with %d records", len(messages))
                                 yield batch
                                 messages = []
                                 
                     except Exception as e:
-                        logger.error(f"Error processing message: {e}", exc_info=True)
+                        logger.error("Error processing message: %s", e, exc_info=True)
                         continue
             
             # Yield remaining messages
             if messages:
                 batch = self._json_to_arrow_batch(messages)
-                logger.debug(f"Created final batch with {len(messages)} records")
+                logger.debug("Created final batch with %d records", len(messages))
                 yield batch
 
     def _json_to_arrow_batch(self, messages: list[dict]) -> pa.RecordBatch:
