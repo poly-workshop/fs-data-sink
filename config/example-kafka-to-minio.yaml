@@ -1,0 +1,40 @@
+# Example configuration: Kafka to MinIO
+# This demonstrates using fs-data-sink with MinIO instead of AWS S3
+source:
+  type: kafka
+  bootstrap_servers:
+    - localhost:9092
+  topics:
+    - data-topic
+  group_id: fs-data-sink-group
+  value_format: json  # or arrow_ipc
+  batch_size: 1000
+
+sink:
+  type: s3
+  bucket: data-lake
+  prefix: raw-data
+  aws_access_key_id: minioadmin
+  aws_secret_access_key: minioadmin
+  region_name: us-east-1
+  endpoint_url: http://localhost:9000  # MinIO endpoint
+  compression: snappy  # snappy, gzip, brotli, zstd, none
+  partition_by:
+    - date
+    - hour
+  extra_config:
+    secure: false  # Use HTTP for local MinIO (use true for production HTTPS)
+
+telemetry:
+  log_level: INFO
+  log_format: json  # json or text
+  enabled: true
+  service_name: fs-data-sink-minio
+  otlp_endpoint: http://localhost:4317
+  trace_enabled: true
+  metrics_enabled: true
+
+pipeline:
+  max_batches: null  # null for unlimited
+  batch_timeout_seconds: 30
+  error_handling: log  # log, raise, or ignore
