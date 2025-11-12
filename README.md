@@ -290,6 +290,13 @@ By default, the sink is flushed only when the pipeline completes. You can config
 
 If both are set, the sink will flush when either condition is met.
 
+**Non-blocking Behavior:**
+
+Sources are non-blocking to enable time-based flushes even when no data is available:
+- When no data is available from the source, the generator yields `None`
+- This allows the pipeline to check flush conditions (time-based) without blocking
+- Previously, the pipeline would block waiting for data, preventing time-based flushes
+
 Example with flush intervals:
 ```yaml
 pipeline:

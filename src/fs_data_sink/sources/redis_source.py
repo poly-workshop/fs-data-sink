@@ -82,7 +82,7 @@ class RedisSource(DataSource):
             self.client.ping()
             logger.info("Successfully connected to Redis")
 
-    def read_batch(self, batch_size: int = 1000) -> Iterator[pa.RecordBatch]:
+    def read_batch(self, batch_size: int = 1000) -> Iterator[pa.RecordBatch | None]:
         """
         Read data batches from Redis.
 
@@ -90,7 +90,8 @@ class RedisSource(DataSource):
             batch_size: Number of messages to accumulate per batch
 
         Yields:
-            Arrow RecordBatch containing the data
+            Arrow RecordBatch containing the data, or None when no data is available
+            (to allow pipeline to check flush conditions without blocking)
         """
         if not self.client:
             raise RuntimeError("Not connected. Call connect() first.")
@@ -121,14 +122,16 @@ class RedisSource(DataSource):
                                 yield from reader
                             except Exception as e:
                                 logger.error("Error processing Arrow IPC message: %s", e)
+                else:
+                    # Yield None when no data is available to allow pipeline to check flush conditions
+                    # This makes read_batch non-blocking so time-based flushes can be checked
+                    if self.continuous:
+                        logger.debug("No messages found, yielding None to allow flush checks")
+                        yield None
 
                 # If not in continuous mode, exit after one iteration
                 if not self.continuous:
                     break
-
-                # If no messages were found and we're in continuous mode, continue polling
-                if not messages:
-                    logger.debug("No messages found, continuing to poll...")
 
     def _read_from_streams(self, batch_size: int) -> list:
         """Read messages from Redis streams."""

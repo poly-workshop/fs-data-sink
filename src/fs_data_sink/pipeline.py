@@ -159,6 +159,28 @@ class DataPipeline:
 
                 for batch in self.source.read_batch(self.settings.source.batch_size):
                     try:
+                        # Check if flush is needed based on time interval (even when no data)
+                        current_time = time.time()
+                        should_flush = False
+                        flush_reason = None
+
+                        if (
+                            flush_interval_seconds
+                            and (current_time - last_flush_time) >= flush_interval_seconds
+                        ):
+                            should_flush = True
+                            flush_reason = f"time interval ({flush_interval_seconds}s)"
+
+                        # If batch is None (no data available), just check time-based flush
+                        if batch is None:
+                            if should_flush:
+                                logger.info("Flushing sink (reason: %s)", flush_reason)
+                                self.sink.flush()
+                                last_flush_time = current_time
+                                batches_since_flush = 0
+                            continue
+
+                        # Process the batch
                         with tracer.start_as_current_span("process_batch") as batch_span:
                             num_rows = batch.num_rows
                             batch_span.set_attribute("batch.num_rows", num_rows)
@@ -195,18 +217,8 @@ class DataPipeline:
                                 total_records,
                             )
 
-                            # Check if flush is needed based on interval or batch count
-                            current_time = time.time()
-                            should_flush = False
-                            flush_reason = None
-
-                            if (
-                                flush_interval_seconds
-                                and (current_time - last_flush_time) >= flush_interval_seconds
-                            ):
-                                should_flush = True
-                                flush_reason = f"time interval ({flush_interval_seconds}s)"
-                            elif (
+                            # Check if flush is needed (time-based already checked, now check batch-based)
+                            if not should_flush and (
                                 flush_interval_batches
                                 and batches_since_flush >= flush_interval_batches
                             ):
