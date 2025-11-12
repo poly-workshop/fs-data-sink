@@ -33,3 +33,5 @@ pipeline:
   max_batches: null
   batch_timeout_seconds: 30
   error_handling: log
+  flush_interval_seconds: null  # Flush every N seconds (null = flush only at end)
+  flush_interval_batches: null  # Flush every N batches (null = flush only at end)

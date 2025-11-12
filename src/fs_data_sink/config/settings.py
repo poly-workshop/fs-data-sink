@@ -83,6 +83,10 @@ class PipelineConfig:
     max_batches: Optional[int] = None
     batch_timeout_seconds: int = 30
     error_handling: str = "log"  # 'log', 'raise', or 'ignore'
+    flush_interval_seconds: Optional[int] = (
+        None  # Flush interval in seconds (None = flush only at end)
+    )
+    flush_interval_batches: Optional[int] = None  # Flush after N batches (None = flush only at end)
 
 
 @dataclass
@@ -147,8 +151,13 @@ def _load_ini_file(config_path: str) -> dict:
     if config.has_section("pipeline"):
         for key, value in config.items("pipeline"):
             # Handle integer values
-            if key in ("max_batches", "batch_timeout_seconds"):
-                # Handle null/None for max_batches
+            if key in (
+                "max_batches",
+                "batch_timeout_seconds",
+                "flush_interval_seconds",
+                "flush_interval_batches",
+            ):
+                # Handle null/None for optional integer values
                 if value.lower() in ("null", "none", ""):
                     config_data["pipeline"][key] = None
                 else:
@@ -261,3 +270,11 @@ def _apply_env_overrides(config_data: dict) -> None:
         telemetry["otlp_endpoint"] = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
     if os.getenv("OTEL_SERVICE_NAME"):
         telemetry["service_name"] = os.getenv("OTEL_SERVICE_NAME")
+
+    # Pipeline overrides
+    pipeline = config_data.setdefault("pipeline", {})
+
+    if os.getenv("PIPELINE_FLUSH_INTERVAL_SECONDS"):
+        pipeline["flush_interval_seconds"] = int(os.getenv("PIPELINE_FLUSH_INTERVAL_SECONDS"))
+    if os.getenv("PIPELINE_FLUSH_INTERVAL_BATCHES"):
+        pipeline["flush_interval_batches"] = int(os.getenv("PIPELINE_FLUSH_INTERVAL_BATCHES"))

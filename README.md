@@ -266,7 +266,29 @@ pipeline:
   max_batches: null  # null for unlimited
   batch_timeout_seconds: 30
   error_handling: log  # log, raise, or ignore
+  flush_interval_seconds: null  # Flush interval in seconds (null = flush only at end)
+  flush_interval_batches: null  # Flush after N batches (null = flush only at end)
 ```
+
+**Flush Interval Configuration:**
+
+By default, the sink is flushed only when the pipeline completes. You can configure periodic flushing based on:
+
+- **Time interval** (`flush_interval_seconds`): Flush after a specified number of seconds
+- **Batch count** (`flush_interval_batches`): Flush after processing a specified number of batches
+
+If both are set, the sink will flush when either condition is met.
+
+Example with flush intervals:
+```yaml
+pipeline:
+  flush_interval_seconds: 60  # Flush every 60 seconds
+  flush_interval_batches: 100  # OR flush every 100 batches
+```
+
+Environment variables:
+- `PIPELINE_FLUSH_INTERVAL_SECONDS`: Flush interval in seconds
+- `PIPELINE_FLUSH_INTERVAL_BATCHES`: Flush interval in batches
 
 ## Data Formats
 
