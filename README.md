@@ -182,7 +182,9 @@ Environment variables:
 
 ### Sink Configuration
 
-#### S3 Sink
+#### S3 Sink (MinIO Client)
+
+The S3 sink now uses the MinIO Python client for better compatibility with MinIO servers, enhanced features, and improved reliability. It works seamlessly with AWS S3, MinIO, and other S3-compatible storage services.
 
 ```yaml
 sink:
@@ -192,11 +194,19 @@ sink:
   aws_access_key_id: optional  # Use IAM role if not provided
   aws_secret_access_key: optional
   region_name: us-east-1
+  endpoint_url: optional  # For MinIO or other S3-compatible services
   compression: snappy  # snappy, gzip, brotli, zstd, none
   partition_by:
     - date
     - hour
 ```
+
+Benefits of MinIO client:
+- Better compatibility with MinIO servers
+- Simplified API with better error handling
+- Enhanced streaming support for large files
+- Built-in retry logic for improved resilience
+- Cross-cloud compatibility (AWS S3, MinIO, GCS, etc.)
 
 Environment variables:
 - `S3_BUCKET`: S3 bucket name
@@ -204,6 +214,7 @@ Environment variables:
 - `AWS_ACCESS_KEY_ID`: AWS access key
 - `AWS_SECRET_ACCESS_KEY`: AWS secret key
 - `AWS_REGION`: AWS region
+- `S3_ENDPOINT_URL`: Custom endpoint for MinIO or S3-compatible services
 
 #### HDFS Sink
 

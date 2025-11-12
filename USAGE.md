@@ -161,7 +161,9 @@ source:
 
 ### Sink Configuration
 
-#### S3
+#### S3 (MinIO Client)
+
+The S3 sink uses the MinIO Python client for enhanced compatibility and features. Works with AWS S3, MinIO, and other S3-compatible storage services.
 
 Full configuration options:
 
@@ -173,14 +175,29 @@ sink:
   aws_access_key_id: AKIA...  # Optional, can use IAM role
   aws_secret_access_key: secret...  # Optional
   region_name: us-east-1
+  endpoint_url: http://minio:9000  # Optional, for MinIO or S3-compatible services
   compression: snappy  # Options: snappy, gzip, brotli, zstd, none
   partition_by:
     - year
     - month
     - day
   extra_config:
-    # Additional boto3 configuration
-    use_ssl: true
+    # Additional MinIO client configuration
+    secure: true  # Use HTTPS (default: true)
+```
+
+**MinIO-specific example:**
+```yaml
+sink:
+  type: s3
+  bucket: data-lake
+  prefix: raw
+  aws_access_key_id: minioadmin
+  aws_secret_access_key: minioadmin
+  endpoint_url: http://localhost:9000
+  region_name: us-east-1
+  extra_config:
+    secure: false  # Use HTTP for local MinIO
 ```
 
 #### HDFS

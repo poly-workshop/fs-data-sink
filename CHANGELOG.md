@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **BREAKING**: Replaced boto3 with MinIO Python client for S3 operations
+  - Better compatibility with MinIO servers
+  - Simplified API with improved error handling
+  - Enhanced streaming support for large files
+  - Built-in retry logic for improved resilience
+  - Cross-cloud compatibility (AWS S3, MinIO, GCS, etc.)
+- Updated docker-compose.yml to use MinIO instead of LocalStack for S3 testing
+- Updated documentation (README, USAGE) to reflect MinIO client usage
+
+### Added
+- New `secure` parameter in S3Sink for controlling HTTPS/HTTP connections
+- Example configuration file for Kafka to MinIO (config/example-kafka-to-minio.yaml)
+- Enhanced S3 endpoint configuration with better MinIO support
+
+### Fixed
+- Improved S3 connection handling with better error messages
+
 ## [0.1.0] - 2024-11-10
 
 ### Added
@@ -66,11 +86,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docker Compose for integration testing
 - Makefile for common development tasks
 
-### Dependencies
+### Dependencies (v0.1.0)
 - pyarrow >= 14.0.0 for Arrow data processing
 - kafka-python >= 2.0.2 for Kafka integration
 - redis >= 5.0.0 for Redis integration
-- boto3 >= 1.34.0 for S3 integration
+- boto3 >= 1.34.0 for S3 integration (replaced by minio in later versions)
 - hdfs >= 2.7.0 for HDFS integration
 - click >= 8.1.0 for CLI
 - pyyaml >= 6.0 for configuration

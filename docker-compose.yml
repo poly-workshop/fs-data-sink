@@ -31,19 +31,24 @@ services:
       - "6379:6379"
     command: redis-server --appendonly yes
 
-  # LocalStack for S3 testing
-  localstack:
-    image: localstack/localstack:latest
+  # MinIO for S3-compatible storage testing
+  minio:
+    image: minio/minio:latest
     ports:
-      - "4566:4566"
-      - "4571:4571"
+      - "9000:9000"
+      - "9001:9001"
     environment:
-      SERVICES: s3
-      DEBUG: 1
-      DATA_DIR: /tmp/localstack/data
-      AWS_DEFAULT_REGION: us-east-1
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_REGION_NAME: us-east-1
+    command: server /data --console-address ":9001"
     volumes:
-      - localstack-data:/tmp/localstack
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
 
   # OpenTelemetry Collector (optional)
   otel-collector:
@@ -99,4 +104,4 @@ services:
       - producer
 
 volumes:
-  localstack-data:
+  minio-data:

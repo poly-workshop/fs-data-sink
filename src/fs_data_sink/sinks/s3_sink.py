@@ -1,13 +1,14 @@
-"""S3 data sink implementation."""
+"""S3 data sink implementation using MinIO client."""
 
 import logging
 from datetime import datetime
 from io import BytesIO
 from typing import Optional
 
-import boto3
 import pyarrow as pa
 import pyarrow.parquet as pq
+from minio import Minio
+from minio.error import S3Error
 from opentelemetry import trace
 
 from fs_data_sink.types import DataSink
@@ -18,9 +19,10 @@ tracer = trace.get_tracer(__name__)
 
 class S3Sink(DataSink):
     """
-    S3 data sink that writes Arrow data to S3 in Parquet format.
+    S3 data sink that writes Arrow data to S3 in Parquet format using MinIO client.
 
     Supports partitioning and compression for efficient analytics.
+    Works with AWS S3, MinIO, and other S3-compatible storage services.
     """
 
     def __init__(
@@ -34,9 +36,10 @@ class S3Sink(DataSink):
         compression: str = "snappy",
         partition_by: Optional[list[str]] = None,
         s3_config: Optional[dict] = None,
+        secure: bool = True,
     ):
         """
-        Initialize S3 sink.
+        Initialize S3 sink with MinIO client.
 
         Args:
             bucket: S3 bucket name
@@ -44,10 +47,11 @@ class S3Sink(DataSink):
             aws_access_key_id: AWS access key (optional, can use IAM role)
             aws_secret_access_key: AWS secret key (optional, can use IAM role)
             region_name: AWS region
-            endpoint_url: S3 endpoint URL (optional, for S3-compatible services like MinIO)
+            endpoint_url: S3 endpoint URL (optional, defaults to AWS S3)
             compression: Compression codec for Parquet ('snappy', 'gzip', 'brotli', 'zstd', 'none')
             partition_by: List of column names to partition by
-            s3_config: Additional S3 client configuration
+            s3_config: Additional MinIO client configuration
+            secure: Use HTTPS for connections (default: True)
         """
         self.bucket = bucket
         self.prefix = prefix.rstrip("/")
@@ -58,34 +62,59 @@ class S3Sink(DataSink):
         self.compression = compression
         self.partition_by = partition_by or []
         self.s3_config = s3_config or {}
+        self.secure = secure
         self.s3_client = None
         self.file_counter = 0
 
     def connect(self) -> None:
-        """Establish connection to S3."""
+        """Establish connection to S3 using MinIO client."""
         with tracer.start_as_current_span("s3_connect"):
-            logger.info("Connecting to S3: bucket=%s, region=%s", self.bucket, self.region_name)
-
-            session_config = {
-                "region_name": self.region_name,
-                **self.s3_config,
-            }
-
-            if self.aws_access_key_id and self.aws_secret_access_key:
-                session_config["aws_access_key_id"] = self.aws_access_key_id
-                session_config["aws_secret_access_key"] = self.aws_secret_access_key
-
+            # Determine endpoint
             if self.endpoint_url:
-                session_config["endpoint_url"] = self.endpoint_url
+                # Parse endpoint URL to extract host
+                endpoint = self.endpoint_url.replace("http://", "").replace("https://", "")
+                secure = (
+                    self.endpoint_url.startswith("https://")
+                    if "://" in self.endpoint_url
+                    else self.secure
+                )
+            else:
+                # Default to AWS S3 endpoint
+                endpoint = f"s3.{self.region_name}.amazonaws.com"
+                secure = self.secure
 
-            self.s3_client = boto3.client("s3", **session_config)
+            logger.info(
+                "Connecting to S3: bucket=%s, endpoint=%s, region=%s, secure=%s",
+                self.bucket,
+                endpoint,
+                self.region_name,
+                secure,
+            )
+
+            # Create MinIO client
+            self.s3_client = Minio(
+                endpoint=endpoint,
+                access_key=self.aws_access_key_id,
+                secret_key=self.aws_secret_access_key,
+                region=self.region_name,
+                secure=secure,
+                **self.s3_config,
+            )
 
             # Test connection by checking if bucket exists
             try:
-                self.s3_client.head_bucket(Bucket=self.bucket)
+                if not self.s3_client.bucket_exists(self.bucket):
+                    logger.warning(
+                        "Bucket '%s' does not exist. Attempting to create it.", self.bucket
+                    )
+                    self.s3_client.make_bucket(self.bucket, location=self.region_name)
+                    logger.info("Created bucket '%s'", self.bucket)
                 logger.info("Successfully connected to S3")
-            except Exception as e:
+            except S3Error as e:
                 logger.error("Failed to access S3 bucket: %s", e)
+                raise
+            except Exception as e:
+                logger.error("Unexpected error connecting to S3: %s", e)
                 raise
 
     def write_batch(
@@ -137,12 +166,15 @@ class S3Sink(DataSink):
                     version="2.6",
                 )
 
-                # Upload to S3
+                # Upload to S3 using MinIO client
                 buffer.seek(0)
+                data_length = len(buffer.getvalue())
                 self.s3_client.put_object(
-                    Bucket=self.bucket,
-                    Key=s3_key,
-                    Body=buffer.getvalue(),
+                    bucket_name=self.bucket,
+                    object_name=s3_key,
+                    data=buffer,
+                    length=data_length,
+                    content_type="application/octet-stream",
                 )
 
                 logger.info(
@@ -150,11 +182,14 @@ class S3Sink(DataSink):
                     self.bucket,
                     s3_key,
                     table.num_rows,
-                    buffer.tell(),
+                    data_length,
                 )
 
+            except S3Error as e:
+                logger.error("S3 error writing batch: %s", e, exc_info=True)
+                raise
             except Exception as e:
-                logger.error("Error writing batch to S3: %s", e, exc_info=True)
+                logger.error("Unexpected error writing batch to S3: %s", e, exc_info=True)
                 raise
 
     def flush(self) -> None:
