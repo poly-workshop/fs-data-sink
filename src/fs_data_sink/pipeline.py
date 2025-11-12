@@ -73,6 +73,7 @@ class DataPipeline:
                 stream_keys=source_config.stream_keys,
                 list_keys=source_config.list_keys,
                 value_format=source_config.value_format,
+                continuous=source_config.continuous,
                 redis_config=source_config.extra_config,
             )
 

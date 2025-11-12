@@ -12,6 +12,7 @@ source:
   #   - data-list-1
   value_format: json  # or arrow_ipc
   batch_size: 1000
+  continuous: true  # Continuously consume data (default: true)
 
 sink:
   type: hdfs

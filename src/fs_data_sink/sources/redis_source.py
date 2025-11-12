@@ -31,6 +31,7 @@ class RedisSource(DataSource):
         list_keys: Optional[list[str]] = None,
         value_format: str = "json",
         block_timeout: int = 1000,
+        continuous: bool = True,
         redis_config: Optional[dict] = None,
     ):
         """
@@ -45,6 +46,7 @@ class RedisSource(DataSource):
             list_keys: List of Redis list keys to read from
             value_format: Format of message values ('json' or 'arrow_ipc')
             block_timeout: Timeout in milliseconds for blocking operations
+            continuous: If True, continuously consume data in a loop; if False, read once and stop
             redis_config: Additional Redis configuration
         """
         self.host = host
@@ -55,6 +57,7 @@ class RedisSource(DataSource):
         self.list_keys = list_keys or []
         self.value_format = value_format
         self.block_timeout = block_timeout
+        self.continuous = continuous
         self.redis_config = redis_config or {}
         self.client: Optional[redis.Redis] = None
         self.stream_ids: dict[str, str] = dict.fromkeys(self.stream_keys, "0")
@@ -93,29 +96,39 @@ class RedisSource(DataSource):
             raise RuntimeError("Not connected. Call connect() first.")
 
         with tracer.start_as_current_span("redis_read_batch"):
-            messages = []
+            # Continuously read and yield batches if continuous mode is enabled
+            while True:
+                messages = []
 
-            # Read from streams if configured
-            if self.stream_keys:
-                messages.extend(self._read_from_streams(batch_size))
+                # Read from streams if configured
+                if self.stream_keys:
+                    messages.extend(self._read_from_streams(batch_size))
 
-            # Read from lists if configured
-            if self.list_keys:
-                messages.extend(self._read_from_lists(batch_size - len(messages)))
+                # Read from lists if configured
+                if self.list_keys:
+                    messages.extend(self._read_from_lists(batch_size - len(messages)))
 
-            if messages:
-                if self.value_format == "json":
-                    batch = self._json_to_arrow_batch(messages)
-                    logger.debug("Created batch with %d records", len(messages))
-                    yield batch
-                elif self.value_format == "arrow_ipc":
-                    # Process Arrow IPC messages
-                    for msg in messages:
-                        try:
-                            reader = pa.ipc.open_stream(msg)
-                            yield from reader
-                        except Exception as e:
-                            logger.error("Error processing Arrow IPC message: %s", e)
+                if messages:
+                    if self.value_format == "json":
+                        batch = self._json_to_arrow_batch(messages)
+                        logger.debug("Created batch with %d records", len(messages))
+                        yield batch
+                    elif self.value_format == "arrow_ipc":
+                        # Process Arrow IPC messages
+                        for msg in messages:
+                            try:
+                                reader = pa.ipc.open_stream(msg)
+                                yield from reader
+                            except Exception as e:
+                                logger.error("Error processing Arrow IPC message: %s", e)
+
+                # If not in continuous mode, exit after one iteration
+                if not self.continuous:
+                    break
+
+                # If no messages were found and we're in continuous mode, continue polling
+                if not messages:
+                    logger.debug("No messages found, continuing to poll...")
 
     def _read_from_streams(self, batch_size: int) -> list:
         """Read messages from Redis streams."""

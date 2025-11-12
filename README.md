@@ -172,13 +172,19 @@ source:
     - list1
   value_format: json  # or arrow_ipc
   batch_size: 1000
+  continuous: true  # Continuously consume data (default: true)
 ```
+
+The Redis source supports two consumption modes:
+- **Continuous mode** (default): Continuously polls Redis for new data, similar to Kafka consumer
+- **One-shot mode**: Reads available data once and stops
 
 Environment variables:
 - `REDIS_HOST`: Redis host
 - `REDIS_PORT`: Redis port
 - `REDIS_PASSWORD`: Redis password
 - `REDIS_STREAM_KEYS`: Comma-separated list of stream keys
+- `REDIS_CONTINUOUS`: Enable continuous consumption (true/false)
 
 ### Sink Configuration
 

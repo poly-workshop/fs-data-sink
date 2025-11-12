@@ -26,6 +26,7 @@ class SourceConfig:
     password: Optional[str] = None
     stream_keys: Optional[list[str]] = None
     list_keys: Optional[list[str]] = None
+    continuous: bool = True
 
     # Common
     value_format: str = "json"
@@ -118,6 +119,9 @@ def _load_ini_file(config_path: str) -> dict:
             # Handle integer values
             elif key in ("port", "db", "batch_size"):
                 config_data["source"][key] = config.getint("source", key)
+            # Handle boolean values
+            elif key in ("continuous",):
+                config_data["source"][key] = config.getboolean("source", key)
             else:
                 config_data["source"][key] = value
 
@@ -217,6 +221,8 @@ def _apply_env_overrides(config_data: dict) -> None:
         source["password"] = os.getenv("REDIS_PASSWORD")
     if os.getenv("REDIS_STREAM_KEYS"):
         source["stream_keys"] = os.getenv("REDIS_STREAM_KEYS").split(",")
+    if os.getenv("REDIS_CONTINUOUS"):
+        source["continuous"] = os.getenv("REDIS_CONTINUOUS").lower() in ("true", "1", "yes")
 
     # Sink overrides
     sink = config_data.setdefault("sink", {})
