@@ -21,6 +21,7 @@ class HDFSSink(DataSink):
     HDFS data sink that writes Arrow data to HDFS in Parquet format.
 
     Supports partitioning and compression for efficient analytics.
+    Batches are buffered in memory and written as Parquet files only when flush() is called.
     """
 
     def __init__(
@@ -51,6 +52,7 @@ class HDFSSink(DataSink):
         self.hdfs_config = hdfs_config or {}
         self.client = None
         self.file_counter = 0
+        self.buffered_batches: list[pa.RecordBatch] = []
 
     def connect(self) -> None:
         """Establish connection to HDFS."""
@@ -83,22 +85,42 @@ class HDFSSink(DataSink):
         self, batch: pa.RecordBatch, partition_cols: Optional[list[str]] = None
     ) -> None:
         """
-        Write a batch of data to HDFS.
+        Buffer a batch of data in memory. Data is written to HDFS only when flush() is called.
 
         Args:
-            batch: Arrow RecordBatch to write
-            partition_cols: Optional list of column names to use for partitioning
+            batch: Arrow RecordBatch to buffer
+            partition_cols: Optional list of column names to use for partitioning (stored for flush)
         """
         if not self.client:
             raise RuntimeError("Not connected. Call connect() first.")
 
-        with tracer.start_as_current_span("hdfs_write_batch"):
-            try:
-                # Use provided partition columns or default
-                parts = partition_cols or self.partition_by
+        with tracer.start_as_current_span("hdfs_write_batch") as span:
+            span.set_attribute("batch.num_rows", batch.num_rows)
 
-                # Convert batch to table
-                table = pa.Table.from_batches([batch])
+            # Buffer the batch in memory
+            self.buffered_batches.append(batch)
+            logger.debug(
+                "Buffered batch: %d rows (total buffered: %d batches)",
+                batch.num_rows,
+                len(self.buffered_batches),
+            )
+
+    def flush(self) -> None:
+        """Flush buffered batches to HDFS as a Parquet file."""
+        if not self.buffered_batches:
+            logger.debug("No buffered batches to flush")
+            return
+
+        if not self.client:
+            raise RuntimeError("Not connected. Call connect() first.")
+
+        with tracer.start_as_current_span("hdfs_flush") as span:
+            try:
+                # Combine all buffered batches into a single table
+                table = pa.Table.from_batches(self.buffered_batches)
+                num_batches = len(self.buffered_batches)
+                span.set_attribute("flush.num_batches", num_batches)
+                span.set_attribute("flush.num_rows", table.num_rows)
 
                 # Generate HDFS path with timestamp and counter
                 timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
@@ -107,9 +129,9 @@ class HDFSSink(DataSink):
                 # Build path with partitions
                 path_parts = [self.base_path]
 
-                if parts and table.num_rows > 0:
+                if self.partition_by and table.num_rows > 0:
                     # Create partition directories
-                    for col in parts:
+                    for col in self.partition_by:
                         if col in table.column_names:
                             # Get first value for partition (simple partitioning)
                             val = table[col][0].as_py()
@@ -136,24 +158,24 @@ class HDFSSink(DataSink):
 
                 # Upload to HDFS
                 buffer.seek(0)
+                data_length = len(buffer.getvalue())
                 with self.client.write(hdfs_path, overwrite=False) as writer:
                     writer.write(buffer.getvalue())
 
                 logger.info(
-                    "Wrote batch to HDFS: %s (%d rows, %d bytes)",
+                    "Flushed %d batches to HDFS: %s (%d rows, %d bytes)",
+                    num_batches,
                     hdfs_path,
                     table.num_rows,
-                    buffer.tell(),
+                    data_length,
                 )
 
-            except Exception as e:
-                logger.error("Error writing batch to HDFS: %s", e, exc_info=True)
-                raise
+                # Clear the buffer
+                self.buffered_batches.clear()
 
-    def flush(self) -> None:
-        """Flush any buffered data to HDFS."""
-        # HDFS writes are immediate, no buffering
-        logger.debug("HDFSSink flush called (no-op)")
+            except Exception as e:
+                logger.error("Error flushing batches to HDFS: %s", e, exc_info=True)
+                raise
 
     def close(self) -> None:
         """Close the HDFS connection."""

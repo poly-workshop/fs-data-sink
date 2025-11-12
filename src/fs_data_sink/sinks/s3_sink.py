@@ -23,6 +23,7 @@ class S3Sink(DataSink):
 
     Supports partitioning and compression for efficient analytics.
     Works with AWS S3, MinIO, and other S3-compatible storage services.
+    Batches are buffered in memory and written as Parquet files only when flush() is called.
     """
 
     def __init__(
@@ -65,6 +66,7 @@ class S3Sink(DataSink):
         self.secure = secure
         self.s3_client = None
         self.file_counter = 0
+        self.buffered_batches: list[pa.RecordBatch] = []
 
     def connect(self) -> None:
         """Establish connection to S3 using MinIO client."""
@@ -121,22 +123,42 @@ class S3Sink(DataSink):
         self, batch: pa.RecordBatch, partition_cols: Optional[list[str]] = None
     ) -> None:
         """
-        Write a batch of data to S3.
+        Buffer a batch of data in memory. Data is written to S3 only when flush() is called.
 
         Args:
-            batch: Arrow RecordBatch to write
-            partition_cols: Optional list of column names to use for partitioning
+            batch: Arrow RecordBatch to buffer
+            partition_cols: Optional list of column names to use for partitioning (stored for flush)
         """
         if not self.s3_client:
             raise RuntimeError("Not connected. Call connect() first.")
 
-        with tracer.start_as_current_span("s3_write_batch"):
-            try:
-                # Use provided partition columns or default
-                parts = partition_cols or self.partition_by
+        with tracer.start_as_current_span("s3_write_batch") as span:
+            span.set_attribute("batch.num_rows", batch.num_rows)
 
-                # Convert batch to table
-                table = pa.Table.from_batches([batch])
+            # Buffer the batch in memory
+            self.buffered_batches.append(batch)
+            logger.debug(
+                "Buffered batch: %d rows (total buffered: %d batches)",
+                batch.num_rows,
+                len(self.buffered_batches),
+            )
+
+    def flush(self) -> None:
+        """Flush buffered batches to S3 as a Parquet file."""
+        if not self.buffered_batches:
+            logger.debug("No buffered batches to flush")
+            return
+
+        if not self.s3_client:
+            raise RuntimeError("Not connected. Call connect() first.")
+
+        with tracer.start_as_current_span("s3_flush") as span:
+            try:
+                # Combine all buffered batches into a single table
+                table = pa.Table.from_batches(self.buffered_batches)
+                num_batches = len(self.buffered_batches)
+                span.set_attribute("flush.num_batches", num_batches)
+                span.set_attribute("flush.num_rows", table.num_rows)
 
                 # Generate S3 key with timestamp and counter
                 timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
@@ -145,9 +167,9 @@ class S3Sink(DataSink):
                 # Build path with partitions
                 path_parts = [self.prefix] if self.prefix else []
 
-                if parts and table.num_rows > 0:
+                if self.partition_by and table.num_rows > 0:
                     # Create partition directories
-                    for col in parts:
+                    for col in self.partition_by:
                         if col in table.column_names:
                             # Get first value for partition (simple partitioning)
                             val = table[col][0].as_py()
@@ -178,24 +200,23 @@ class S3Sink(DataSink):
                 )
 
                 logger.info(
-                    "Wrote batch to S3: s3://%s/%s (%d rows, %d bytes)",
+                    "Flushed %d batches to S3: s3://%s/%s (%d rows, %d bytes)",
+                    num_batches,
                     self.bucket,
                     s3_key,
                     table.num_rows,
                     data_length,
                 )
 
+                # Clear the buffer
+                self.buffered_batches.clear()
+
             except S3Error as e:
-                logger.error("S3 error writing batch: %s", e, exc_info=True)
+                logger.error("S3 error flushing batches: %s", e, exc_info=True)
                 raise
             except Exception as e:
-                logger.error("Unexpected error writing batch to S3: %s", e, exc_info=True)
+                logger.error("Unexpected error flushing batches to S3: %s", e, exc_info=True)
                 raise
-
-    def flush(self) -> None:
-        """Flush any buffered data to S3."""
-        # S3 writes are immediate, no buffering
-        logger.debug("S3Sink flush called (no-op)")
 
     def close(self) -> None:
         """Close the S3 connection."""

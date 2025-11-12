@@ -8,6 +8,8 @@ Apache Arrow data pipeline that reads and transfers data from Kafka or Redis to 
 - **Multiple Sinks**: Write to S3 or HDFS
 - **Apache Arrow**: Native Arrow support for high-performance data processing
 - **Parquet Format**: Efficient columnar storage with compression
+- **Batch Buffering**: Accumulate multiple batches in memory and write as single Parquet files on flush
+- **Configurable Flushing**: Flush based on time intervals or batch counts
 - **Partitioning**: Support for data partitioning by columns
 - **OpenTelemetry**: Built-in observability with traces and metrics
 - **Flexible Configuration**: YAML files, environment variables, or CLI options
@@ -270,7 +272,16 @@ pipeline:
   flush_interval_batches: null  # Flush after N batches (null = flush only at end)
 ```
 
-**Flush Interval Configuration:**
+**Flush Interval and Batching:**
+
+The pipeline uses an efficient batching strategy where data is buffered in memory and written to Parquet files only when flushed. This reduces the number of small files created and improves performance.
+
+**Flush Behavior:**
+- Batches are accumulated in memory via `write_batch()` calls
+- Parquet files are written to disk/S3/HDFS only when `flush()` is called
+- Multiple buffered batches are combined into a single Parquet file per flush
+
+**Flush Triggers:**
 
 By default, the sink is flushed only when the pipeline completes. You can configure periodic flushing based on:
 
@@ -282,9 +293,15 @@ If both are set, the sink will flush when either condition is met.
 Example with flush intervals:
 ```yaml
 pipeline:
-  flush_interval_seconds: 60  # Flush every 60 seconds
-  flush_interval_batches: 100  # OR flush every 100 batches
+  flush_interval_seconds: 60    # Flush every 60 seconds
+  flush_interval_batches: 100   # OR flush every 100 batches
 ```
+
+**Benefits:**
+- Fewer, larger Parquet files instead of many small files
+- Better compression ratios
+- Reduced I/O operations
+- Improved query performance in analytics databases
 
 Environment variables:
 - `PIPELINE_FLUSH_INTERVAL_SECONDS`: Flush interval in seconds
