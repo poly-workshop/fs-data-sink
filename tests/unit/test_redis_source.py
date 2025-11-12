@@ -19,12 +19,13 @@ def mock_redis_client():
 
 
 def test_redis_source_continuous_mode_enabled(mock_redis_client):
-    """Test that Redis source with continuous=True keeps yielding batches."""
+    """Test that Redis source with continuous=True keeps yielding batches and None."""
     # Setup mock to return messages on first two calls, then empty on third
     mock_redis_client.xread.side_effect = [
         [(b"stream1", [(b"1-0", {b"value": json.dumps({"id": 1, "name": "test1"}).encode()})])],
         [(b"stream1", [(b"1-1", {b"value": json.dumps({"id": 2, "name": "test2"}).encode()})])],
-        [],  # Empty result to break the test loop
+        [],  # Empty result - will yield None in continuous mode
+        [],  # Another empty to verify continuous yielding
     ]
 
     source = RedisSource(
@@ -35,22 +36,25 @@ def test_redis_source_continuous_mode_enabled(mock_redis_client):
     )
     source.connect()
 
-    # Read batches - should get 2 batches before the empty result
-    batches = []
+    # Read batches - should get 2 batches, then None values
     batch_gen = source.read_batch(batch_size=10)
 
     # Get first batch
     batch1 = next(batch_gen)
+    assert batch1 is not None
     assert batch1.num_rows == 1
-    batches.append(batch1)
 
     # Get second batch
     batch2 = next(batch_gen)
+    assert batch2 is not None
     assert batch2.num_rows == 1
-    batches.append(batch2)
+
+    # Get None when no data (continuous mode yields None instead of blocking)
+    batch3 = next(batch_gen)
+    assert batch3 is None
 
     # Verify xread was called multiple times (continuous mode)
-    assert mock_redis_client.xread.call_count >= 2
+    assert mock_redis_client.xread.call_count >= 3
 
     source.close()
 
@@ -87,7 +91,8 @@ def test_redis_source_continuous_mode_with_lists(mock_redis_client):
     mock_redis_client.blpop.side_effect = [
         ("list1", json.dumps({"id": 1, "name": "test1"}).encode()),
         ("list1", json.dumps({"id": 2, "name": "test2"}).encode()),
-        None,  # Timeout to break the test loop
+        None,  # Timeout - will yield None in continuous mode
+        None,  # Another timeout
     ]
 
     source = RedisSource(
@@ -98,17 +103,23 @@ def test_redis_source_continuous_mode_with_lists(mock_redis_client):
     )
     source.connect()
 
-    # Read batches - should get 2 batches
+    # Read batches - should get 2 batches, then None
     batch_gen = source.read_batch(batch_size=1)
 
     batch1 = next(batch_gen)
+    assert batch1 is not None
     assert batch1.num_rows == 1
 
     batch2 = next(batch_gen)
+    assert batch2 is not None
     assert batch2.num_rows == 1
 
+    # Get None when no data (continuous mode yields None)
+    batch3 = next(batch_gen)
+    assert batch3 is None
+
     # In continuous mode, it keeps trying even after timeout
-    assert mock_redis_client.blpop.call_count >= 2
+    assert mock_redis_client.blpop.call_count >= 3
 
     source.close()
 
@@ -117,7 +128,7 @@ def test_redis_source_continuous_mode_default(mock_redis_client):
     """Test that continuous mode is True by default."""
     mock_redis_client.xread.side_effect = [
         [(b"stream1", [(b"1-0", {b"value": json.dumps({"id": 1}).encode()})])],
-        [],
+        [],  # Will yield None
     ]
 
     source = RedisSource(
@@ -131,10 +142,15 @@ def test_redis_source_continuous_mode_default(mock_redis_client):
 
     source.connect()
 
-    # Should keep trying to read
+    # Should keep trying to read and yield None when no data
     batch_gen = source.read_batch(batch_size=10)
     batch1 = next(batch_gen)
+    assert batch1 is not None
     assert batch1.num_rows == 1
+
+    # Next should yield None (continuous mode, no data)
+    batch2 = next(batch_gen)
+    assert batch2 is None
 
     source.close()
 
