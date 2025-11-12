@@ -46,8 +46,8 @@ def setup_logging(log_level: str, log_format: str) -> None:
 
     # Reduce noise from external libraries
     logging.getLogger("kafka").setLevel(logging.WARNING)
-    logging.getLogger("boto3").setLevel(logging.WARNING)
-    logging.getLogger("botocore").setLevel(logging.WARNING)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)  # Used by MinIO client
+    logging.getLogger("minio").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 
