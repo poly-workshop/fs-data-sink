@@ -76,6 +76,8 @@ class DataPipeline:
                 value_format=source_config.value_format,
                 continuous=source_config.continuous,
                 redis_config=source_config.extra_config,
+                consumer_group=source_config.consumer_group,
+                consumer_name=source_config.consumer_name,
             )
 
         raise ValueError(f"Unsupported source type: {source_config.type}")

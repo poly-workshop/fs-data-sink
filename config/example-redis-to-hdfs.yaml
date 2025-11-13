@@ -13,6 +13,8 @@ source:
   value_format: json  # or arrow_ipc
   batch_size: 1000
   continuous: true  # Continuously consume data (default: true)
+  consumer_group: fs-data-sink-group  # Required for Redis Streams
+  # consumer_name: optional  # Defaults to hostname-id if not provided
 
 sink:
   type: hdfs

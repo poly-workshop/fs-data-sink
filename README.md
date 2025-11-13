@@ -175,11 +175,22 @@ source:
   value_format: json  # or arrow_ipc
   batch_size: 1000
   continuous: true  # Continuously consume data (default: true)
+  consumer_group: my-consumer-group  # Required for Redis Streams
+  consumer_name: optional  # Defaults to hostname-id if not provided
 ```
 
 The Redis source supports two consumption modes:
 - **Continuous mode** (default): Continuously polls Redis for new data, similar to Kafka consumer
 - **One-shot mode**: Reads available data once and stops
+
+**Redis Streams Consumer Groups:**
+When using Redis Streams (`stream_keys`), a `consumer_group` is required. The source uses Redis consumer groups to:
+- Track message consumption across multiple consumers
+- Enable parallel processing with multiple pipeline instances
+- Automatically acknowledge messages after successful processing with XACK
+- Provide at-least-once delivery semantics
+
+If `consumer_name` is not provided, it defaults to `{hostname}-{id}` to ensure uniqueness.
 
 Environment variables:
 - `REDIS_HOST`: Redis host
@@ -187,6 +198,8 @@ Environment variables:
 - `REDIS_PASSWORD`: Redis password
 - `REDIS_STREAM_KEYS`: Comma-separated list of stream keys
 - `REDIS_CONTINUOUS`: Enable continuous consumption (true/false)
+- `REDIS_CONSUMER_GROUP`: Consumer group name (required for streams)
+- `REDIS_CONSUMER_NAME`: Consumer name within the group
 
 ### Sink Configuration
 
