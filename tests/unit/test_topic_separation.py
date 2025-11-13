@@ -18,10 +18,14 @@ def test_local_sink_separates_by_topic():
         sink.connect()
 
         # Create batches with different topic metadata
-        schema_topic1 = pa.schema([("id", pa.int64()), ("value", pa.string())], metadata={b"topic": b"topic1"})
+        schema_topic1 = pa.schema(
+            [("id", pa.int64()), ("value", pa.string())], metadata={b"topic": b"topic1"}
+        )
         batch1 = pa.record_batch([[1], ["data1"]], schema=schema_topic1)
 
-        schema_topic2 = pa.schema([("id", pa.int64()), ("value", pa.string())], metadata={b"topic": b"topic2"})
+        schema_topic2 = pa.schema(
+            [("id", pa.int64()), ("value", pa.string())], metadata={b"topic": b"topic2"}
+        )
         batch2 = pa.record_batch([[2], ["data2"]], schema=schema_topic2)
 
         # Write batches
@@ -53,10 +57,14 @@ def test_local_sink_separates_by_stream_key():
         sink.connect()
 
         # Create batches with different stream_key metadata
-        schema_stream1 = pa.schema([("id", pa.int64()), ("value", pa.string())], metadata={b"stream_key": b"stream1"})
+        schema_stream1 = pa.schema(
+            [("id", pa.int64()), ("value", pa.string())], metadata={b"stream_key": b"stream1"}
+        )
         batch1 = pa.record_batch([[1], ["data1"]], schema=schema_stream1)
 
-        schema_stream2 = pa.schema([("id", pa.int64()), ("value", pa.string())], metadata={b"stream_key": b"stream2"})
+        schema_stream2 = pa.schema(
+            [("id", pa.int64()), ("value", pa.string())], metadata={b"stream_key": b"stream2"}
+        )
         batch2 = pa.record_batch([[2], ["data2"]], schema=schema_stream2)
 
         # Write batches
@@ -90,7 +98,7 @@ def test_local_sink_with_partitioning_and_topic():
         # Create batches with topic metadata and partition column
         schema = pa.schema(
             [("id", pa.int64()), ("date", pa.string()), ("value", pa.string())],
-            metadata={b"topic": b"events"}
+            metadata={b"topic": b"events"},
         )
         batch = pa.record_batch([[1], ["2024-01-01"], ["data1"]], schema=schema)
 
@@ -121,10 +129,14 @@ def test_s3_sink_separates_by_topic():
         sink.connect()
 
         # Create batches with different topic metadata
-        schema_topic1 = pa.schema([("id", pa.int64()), ("value", pa.string())], metadata={b"topic": b"topic1"})
+        schema_topic1 = pa.schema(
+            [("id", pa.int64()), ("value", pa.string())], metadata={b"topic": b"topic1"}
+        )
         batch1 = pa.record_batch([[1], ["data1"]], schema=schema_topic1)
 
-        schema_topic2 = pa.schema([("id", pa.int64()), ("value", pa.string())], metadata={b"topic": b"topic2"})
+        schema_topic2 = pa.schema(
+            [("id", pa.int64()), ("value", pa.string())], metadata={b"topic": b"topic2"}
+        )
         batch2 = pa.record_batch([[2], ["data2"]], schema=schema_topic2)
 
         # Write batches
@@ -153,6 +165,7 @@ def test_kafka_source_adds_topic_metadata():
 
         # Mock TopicPartition
         from kafka import TopicPartition
+
         tp1 = TopicPartition("topic1", 0)
         tp2 = TopicPartition("topic2", 0)
 
@@ -165,15 +178,15 @@ def test_kafka_source_adds_topic_metadata():
 
         # First poll returns messages, second returns empty, third returns empty again for None yield
         def poll_side_effect(**kwargs):
-            if not hasattr(poll_side_effect, 'call_count'):
+            if not hasattr(poll_side_effect, "call_count"):
                 poll_side_effect.call_count = 0
             poll_side_effect.call_count += 1
-            
+
             if poll_side_effect.call_count == 1:
                 return {tp1: [mock_message1], tp2: [mock_message2]}
             else:
                 return {}
-        
+
         mock_consumer.poll.side_effect = poll_side_effect
 
         source = KafkaSource(
@@ -193,7 +206,11 @@ def test_kafka_source_adds_topic_metadata():
         assert len(batches) == 2
 
         # Check that each batch has topic metadata
-        topics = {batch.schema.metadata.get(b"topic").decode() for batch in batches if batch.schema.metadata}
+        topics = {
+            batch.schema.metadata.get(b"topic").decode()
+            for batch in batches
+            if batch.schema.metadata
+        }
         assert "topic1" in topics
         assert "topic2" in topics
 
@@ -227,7 +244,11 @@ def test_redis_source_adds_stream_key_metadata():
         assert len(batches) == 2
 
         # Check that each batch has stream_key metadata
-        stream_keys = {batch.schema.metadata.get(b"stream_key").decode() for batch in batches if batch.schema.metadata}
+        stream_keys = {
+            batch.schema.metadata.get(b"stream_key").decode()
+            for batch in batches
+            if batch.schema.metadata
+        }
         assert "stream1" in stream_keys
         assert "stream2" in stream_keys
 

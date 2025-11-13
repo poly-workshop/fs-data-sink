@@ -82,7 +82,7 @@ class KafkaSource(DataSource):
             batch_size: Number of messages to accumulate per batch
 
         Yields:
-            Arrow RecordBatch containing the data with topic metadata, or None when no data 
+            Arrow RecordBatch containing the data with topic metadata, or None when no data
             is available (to allow pipeline to check flush conditions without blocking)
         """
         if not self.consumer:
@@ -103,7 +103,9 @@ class KafkaSource(DataSource):
                     if messages_by_topic:
                         for topic, messages in messages_by_topic.items():
                             batch = self._json_to_arrow_batch(messages, topic)
-                            logger.debug("Created batch with %d records from topic %s", len(messages), topic)
+                            logger.debug(
+                                "Created batch with %d records from topic %s", len(messages), topic
+                            )
                             yield batch
                         messages_by_topic = {}
                     else:
@@ -130,10 +132,15 @@ class KafkaSource(DataSource):
                                     for batch in reader:
                                         # Add topic metadata to the batch
                                         schema_with_metadata = batch.schema.with_metadata(
-                                            {**(batch.schema.metadata or {}), b'topic': topic.encode()}
+                                            {
+                                                **(batch.schema.metadata or {}),
+                                                b"topic": topic.encode(),
+                                            }
                                         )
                                         arrays = [batch.column(i) for i in range(batch.num_columns)]
-                                        batch_with_metadata = pa.record_batch(arrays, schema=schema_with_metadata)
+                                        batch_with_metadata = pa.record_batch(
+                                            arrays, schema=schema_with_metadata
+                                        )
                                         yield batch_with_metadata
                                     continue
                                 else:
@@ -142,10 +149,18 @@ class KafkaSource(DataSource):
                                     )
 
                                 # Check if any topic has accumulated enough messages
-                                topics_to_yield = [t for t, msgs in messages_by_topic.items() if len(msgs) >= batch_size]
+                                topics_to_yield = [
+                                    t
+                                    for t, msgs in messages_by_topic.items()
+                                    if len(msgs) >= batch_size
+                                ]
                                 for t in topics_to_yield:
                                     batch = self._json_to_arrow_batch(messages_by_topic[t], t)
-                                    logger.debug("Created batch with %d records from topic %s", len(messages_by_topic[t]), t)
+                                    logger.debug(
+                                        "Created batch with %d records from topic %s",
+                                        len(messages_by_topic[t]),
+                                        t,
+                                    )
                                     yield batch
                                     del messages_by_topic[t]
 
@@ -156,25 +171,25 @@ class KafkaSource(DataSource):
     def _json_to_arrow_batch(self, messages: list[dict], topic: str) -> pa.RecordBatch:
         """
         Convert a list of JSON messages to Arrow RecordBatch with topic metadata.
-        
+
         Args:
             messages: List of JSON message dictionaries
             topic: Kafka topic name
-            
+
         Returns:
             Arrow RecordBatch with topic stored in schema metadata
         """
         # Create a table from the list of dictionaries
         table = pa.Table.from_pylist(messages)
         # Add topic metadata to schema
-        schema_with_metadata = table.schema.with_metadata({b'topic': topic.encode()})
+        schema_with_metadata = table.schema.with_metadata({b"topic": topic.encode()})
         # Rebuild table with metadata
         table = pa.table(table.to_pydict(), schema=schema_with_metadata)
         # Convert to a single batch
         if table.num_rows > 0:
             return table.to_batches()[0]
         # Return empty batch with metadata
-        return pa.record_batch([], schema=pa.schema([], metadata={b'topic': topic.encode()}))
+        return pa.record_batch([], schema=pa.schema([], metadata={b"topic": topic.encode()}))
 
     def close(self) -> None:
         """Close the Kafka consumer."""

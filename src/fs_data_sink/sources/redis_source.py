@@ -133,7 +133,7 @@ class RedisSource(DataSource):
             batch_size: Number of messages to accumulate per batch
 
         Yields:
-            Arrow RecordBatch containing the data with stream_key metadata, or None when no 
+            Arrow RecordBatch containing the data with stream_key metadata, or None when no
             data is available (to allow pipeline to check flush conditions without blocking)
         """
         if not self.client:
@@ -155,7 +155,9 @@ class RedisSource(DataSource):
 
                 # Read from lists if configured
                 if self.list_keys:
-                    list_messages = self._read_from_lists(batch_size - sum(len(msgs) for msgs in messages_by_key.values()))
+                    list_messages = self._read_from_lists(
+                        batch_size - sum(len(msgs) for msgs in messages_by_key.values())
+                    )
                     for key, msgs in list_messages.items():
                         if key not in messages_by_key:
                             messages_by_key[key] = []
@@ -166,7 +168,9 @@ class RedisSource(DataSource):
                         # Yield a batch for each stream_key/list_key
                         for stream_key, messages in messages_by_key.items():
                             batch = self._json_to_arrow_batch(messages, stream_key)
-                            logger.debug("Created batch with %d records from %s", len(messages), stream_key)
+                            logger.debug(
+                                "Created batch with %d records from %s", len(messages), stream_key
+                            )
                             yield batch
                     elif self.value_format == "arrow_ipc":
                         # Process Arrow IPC messages and add stream_key metadata
@@ -177,10 +181,15 @@ class RedisSource(DataSource):
                                     for batch in reader:
                                         # Add stream_key metadata to the batch
                                         schema_with_metadata = batch.schema.with_metadata(
-                                            {**(batch.schema.metadata or {}), b'stream_key': stream_key.encode()}
+                                            {
+                                                **(batch.schema.metadata or {}),
+                                                b"stream_key": stream_key.encode(),
+                                            }
                                         )
                                         arrays = [batch.column(i) for i in range(batch.num_columns)]
-                                        batch_with_metadata = pa.record_batch(arrays, schema=schema_with_metadata)
+                                        batch_with_metadata = pa.record_batch(
+                                            arrays, schema=schema_with_metadata
+                                        )
                                         yield batch_with_metadata
                                 except Exception as e:
                                     logger.error("Error processing Arrow IPC message: %s", e)
@@ -198,7 +207,7 @@ class RedisSource(DataSource):
     def _read_from_streams(self, batch_size: int) -> dict:
         """
         Read messages from Redis streams using consumer groups.
-        
+
         Returns:
             Dictionary mapping stream_key to list of messages
         """
@@ -264,7 +273,7 @@ class RedisSource(DataSource):
     def _read_from_lists(self, batch_size: int) -> dict:
         """
         Read messages from Redis lists.
-        
+
         Returns:
             Dictionary mapping list_key to list of messages
         """
@@ -282,7 +291,7 @@ class RedisSource(DataSource):
                 if result:
                     list_key, value = result
                     list_key_str = list_key.decode() if isinstance(list_key, bytes) else list_key
-                    
+
                     if list_key_str not in messages_by_key:
                         messages_by_key[list_key_str] = []
                     messages_by_key[list_key_str].append(value)
@@ -297,11 +306,11 @@ class RedisSource(DataSource):
     def _json_to_arrow_batch(self, messages: list, stream_key: str) -> pa.RecordBatch:
         """
         Convert a list of JSON messages to Arrow RecordBatch with stream_key metadata.
-        
+
         Args:
             messages: List of JSON messages
             stream_key: Redis stream key or list key
-            
+
         Returns:
             Arrow RecordBatch with stream_key stored in schema metadata
         """
@@ -320,16 +329,20 @@ class RedisSource(DataSource):
         if parsed_messages:
             table = pa.Table.from_pylist(parsed_messages)
             # Add stream_key metadata to schema
-            schema_with_metadata = table.schema.with_metadata({b'stream_key': stream_key.encode()})
+            schema_with_metadata = table.schema.with_metadata({b"stream_key": stream_key.encode()})
             # Rebuild table with metadata
             table = pa.table(table.to_pydict(), schema=schema_with_metadata)
             if table.num_rows > 0:
                 return table.to_batches()[0]
             # Return empty batch with metadata
-            return pa.record_batch([], schema=pa.schema([], metadata={b'stream_key': stream_key.encode()}))
+            return pa.record_batch(
+                [], schema=pa.schema([], metadata={b"stream_key": stream_key.encode()})
+            )
 
         # Return empty batch with metadata
-        return pa.record_batch([], schema=pa.schema([], metadata={b'stream_key': stream_key.encode()}))
+        return pa.record_batch(
+            [], schema=pa.schema([], metadata={b"stream_key": stream_key.encode()})
+        )
 
     def close(self) -> None:
         """Close the Redis connection."""

@@ -105,16 +105,18 @@ class LocalSink(DataSink):
                     topic = None
                     stream_key = None
                     if batch.schema.metadata:
-                        topic = batch.schema.metadata.get(b'topic')
-                        stream_key = batch.schema.metadata.get(b'stream_key')
-                    
+                        topic = batch.schema.metadata.get(b"topic")
+                        stream_key = batch.schema.metadata.get(b"stream_key")
+
                     # Use topic or stream_key as the source identifier
                     source_id = None
                     if topic:
                         source_id = topic.decode() if isinstance(topic, bytes) else topic
                     elif stream_key:
-                        source_id = stream_key.decode() if isinstance(stream_key, bytes) else stream_key
-                    
+                        source_id = (
+                            stream_key.decode() if isinstance(stream_key, bytes) else stream_key
+                        )
+
                     # Group batches by source_id (default to None if no metadata)
                     if source_id not in batches_by_source:
                         batches_by_source[source_id] = []
@@ -140,24 +142,26 @@ class LocalSink(DataSink):
                 logger.error("Error flushing batches to local filesystem: %s", e, exc_info=True)
                 raise
 
-    def _flush_batches_for_source(self, source_id: Optional[str], batches: list[pa.RecordBatch]) -> None:
+    def _flush_batches_for_source(
+        self, source_id: Optional[str], batches: list[pa.RecordBatch]
+    ) -> None:
         """
         Flush batches for a specific topic/stream_key to local filesystem.
-        
+
         Args:
             source_id: Topic name or stream_key (None for data without metadata)
             batches: List of batches to flush
         """
         # Combine batches into a single table
         table = pa.Table.from_batches(batches)
-        
+
         # Generate file path with timestamp and counter
         timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         self.file_counter += 1
 
         # Build path with topic/stream_key folder
         path_parts = []
-        
+
         # Add topic/stream_key as a folder level
         if source_id:
             path_parts.append(source_id)
