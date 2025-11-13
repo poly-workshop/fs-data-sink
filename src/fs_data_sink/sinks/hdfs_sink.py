@@ -198,6 +198,11 @@ class HDFSSink(DataSink):
         """
         Merge small Parquet files into larger consolidated files by time period.
 
+        This method reads existing Parquet files from HDFS, groups them by time period based on
+        their filenames, and merges files in each group into a single consolidated file.
+        Dictionary encoding is explicitly disabled for merged files to avoid schema compatibility
+        issues when reading files that may have been written with different dictionary encodings.
+
         Args:
             period: Time period for grouping files ('hour', 'day', 'week', 'month')
                    If None, uses the sink's configured merge_period

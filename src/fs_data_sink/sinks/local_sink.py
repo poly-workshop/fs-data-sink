@@ -1,6 +1,7 @@
 """Local filesystem data sink implementation."""
 
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -161,6 +162,11 @@ class LocalSink(DataSink):
         """
         Merge small Parquet files into larger consolidated files by time period.
 
+        This method reads existing Parquet files, groups them by time period based on their
+        filenames, and merges files in each group into a single consolidated file. Dictionary
+        encoding is explicitly disabled for merged files to avoid schema compatibility issues
+        when reading files that may have been written with different dictionary encodings.
+
         Args:
             period: Time period for grouping files ('hour', 'day', 'week', 'month')
                    If None, uses the sink's configured merge_period
@@ -185,9 +191,11 @@ class LocalSink(DataSink):
 
                 # If partitioned, include partition directories
                 if self.partition_by:
-                    for root, dirs, _ in self.base_path.walk():
+                    # Use os.walk for Python 3.9+ compatibility
+                    for root, dirs, _ in os.walk(self.base_path):
+                        root_path = Path(root)
                         for d in dirs:
-                            dirs_to_process.append(root / d)
+                            dirs_to_process.append(root_path / d)
 
                 for directory in dirs_to_process:
                     if not directory.exists():
