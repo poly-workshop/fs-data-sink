@@ -30,6 +30,7 @@ class KafkaSource(DataSource):
         auto_offset_reset: str = "earliest",
         enable_auto_commit: bool = True,
         consumer_config: Optional[dict] = None,
+        poll_timeout_ms: int = 1000,
     ):
         """
         Initialize Kafka source.
@@ -42,6 +43,7 @@ class KafkaSource(DataSource):
             auto_offset_reset: What to do when there is no initial offset
             enable_auto_commit: Whether to auto-commit offsets
             consumer_config: Additional Kafka consumer configuration
+            poll_timeout_ms: Timeout in milliseconds for polling (default: 1000ms)
         """
         self.bootstrap_servers = bootstrap_servers
         self.topics = topics
@@ -50,6 +52,7 @@ class KafkaSource(DataSource):
         self.auto_offset_reset = auto_offset_reset
         self.enable_auto_commit = enable_auto_commit
         self.consumer_config = consumer_config or {}
+        self.poll_timeout_ms = poll_timeout_ms
         self.consumer: Optional[KafkaConsumer] = None
 
     def connect(self) -> None:
@@ -71,7 +74,7 @@ class KafkaSource(DataSource):
             self.consumer = KafkaConsumer(*self.topics, **config)
             logger.info("Successfully connected to Kafka")
 
-    def read_batch(self, batch_size: int = 1000) -> Iterator[pa.RecordBatch]:
+    def read_batch(self, batch_size: int = 1000) -> Iterator[Optional[pa.RecordBatch]]:
         """
         Read data batches from Kafka.
 
@@ -79,7 +82,8 @@ class KafkaSource(DataSource):
             batch_size: Number of messages to accumulate per batch
 
         Yields:
-            Arrow RecordBatch containing the data
+            Arrow RecordBatch containing the data, or None when no data is available
+            (to allow pipeline to check flush conditions without blocking)
         """
         if not self.consumer:
             raise RuntimeError("Not connected. Call connect() first.")
@@ -87,38 +91,55 @@ class KafkaSource(DataSource):
         with tracer.start_as_current_span("kafka_read_batch"):
             messages = []
 
-            for message in self.consumer:
-                with tracer.start_as_current_span("kafka_process_message"):
-                    try:
-                        if self.value_format == "json":
-                            data = json.loads(message.value.decode("utf-8"))
-                            messages.append(data)
-                        elif self.value_format == "arrow_ipc":
-                            # Deserialize Arrow IPC format
-                            reader = pa.ipc.open_stream(message.value)
-                            for batch in reader:
-                                yield batch
-                            continue
-                        else:
-                            raise ValueError(f"Unsupported value format: {self.value_format}")
+            while True:
+                # Poll for messages with timeout (non-blocking)
+                raw_messages = self.consumer.poll(
+                    timeout_ms=self.poll_timeout_ms, max_records=batch_size
+                )
 
-                        if len(messages) >= batch_size:
-                            # Convert accumulated JSON messages to Arrow RecordBatch
-                            if messages:
-                                batch = self._json_to_arrow_batch(messages)
-                                logger.debug("Created batch with %d records", len(messages))
-                                yield batch
-                                messages = []
+                if not raw_messages:
+                    # No messages available - yield None to allow flush checks
+                    if messages:
+                        # Yield accumulated messages first
+                        batch = self._json_to_arrow_batch(messages)
+                        logger.debug("Created batch with %d records", len(messages))
+                        yield batch
+                        messages = []
+                    else:
+                        # No messages accumulated, yield None
+                        logger.debug("No messages from Kafka, yielding None to allow flush checks")
+                        yield None
+                    continue
 
-                    except Exception as e:
-                        logger.error("Error processing message: %s", e, exc_info=True)
-                        continue
+                # Process messages from poll
+                for _topic_partition, records in raw_messages.items():
+                    for message in records:
+                        with tracer.start_as_current_span("kafka_process_message"):
+                            try:
+                                if self.value_format == "json":
+                                    data = json.loads(message.value.decode("utf-8"))
+                                    messages.append(data)
+                                elif self.value_format == "arrow_ipc":
+                                    # Deserialize Arrow IPC format
+                                    reader = pa.ipc.open_stream(message.value)
+                                    for batch in reader:
+                                        yield batch
+                                    continue
+                                else:
+                                    raise ValueError(
+                                        f"Unsupported value format: {self.value_format}"
+                                    )
 
-            # Yield remaining messages
-            if messages:
-                batch = self._json_to_arrow_batch(messages)
-                logger.debug("Created final batch with %d records", len(messages))
-                yield batch
+                                if len(messages) >= batch_size:
+                                    # Convert accumulated JSON messages to Arrow RecordBatch
+                                    batch = self._json_to_arrow_batch(messages)
+                                    logger.debug("Created batch with %d records", len(messages))
+                                    yield batch
+                                    messages = []
+
+                            except Exception as e:
+                                logger.error("Error processing message: %s", e, exc_info=True)
+                                continue
 
     def _json_to_arrow_batch(self, messages: list[dict]) -> pa.RecordBatch:
         """Convert a list of JSON messages to Arrow RecordBatch."""

@@ -26,6 +26,7 @@ class SourceConfig:
     password: Optional[str] = None
     stream_keys: Optional[list[str]] = None
     list_keys: Optional[list[str]] = None
+    continuous: bool = True
 
     # Common
     value_format: str = "json"
@@ -82,6 +83,10 @@ class PipelineConfig:
     max_batches: Optional[int] = None
     batch_timeout_seconds: int = 30
     error_handling: str = "log"  # 'log', 'raise', or 'ignore'
+    flush_interval_seconds: Optional[int] = (
+        None  # Flush interval in seconds (None = flush only at end)
+    )
+    flush_interval_batches: Optional[int] = None  # Flush after N batches (None = flush only at end)
 
 
 @dataclass
@@ -118,6 +123,9 @@ def _load_ini_file(config_path: str) -> dict:
             # Handle integer values
             elif key in ("port", "db", "batch_size"):
                 config_data["source"][key] = config.getint("source", key)
+            # Handle boolean values
+            elif key in ("continuous",):
+                config_data["source"][key] = config.getboolean("source", key)
             else:
                 config_data["source"][key] = value
 
@@ -143,8 +151,13 @@ def _load_ini_file(config_path: str) -> dict:
     if config.has_section("pipeline"):
         for key, value in config.items("pipeline"):
             # Handle integer values
-            if key in ("max_batches", "batch_timeout_seconds"):
-                # Handle null/None for max_batches
+            if key in (
+                "max_batches",
+                "batch_timeout_seconds",
+                "flush_interval_seconds",
+                "flush_interval_batches",
+            ):
+                # Handle null/None for optional integer values
                 if value.lower() in ("null", "none", ""):
                     config_data["pipeline"][key] = None
                 else:
@@ -217,6 +230,8 @@ def _apply_env_overrides(config_data: dict) -> None:
         source["password"] = os.getenv("REDIS_PASSWORD")
     if os.getenv("REDIS_STREAM_KEYS"):
         source["stream_keys"] = os.getenv("REDIS_STREAM_KEYS").split(",")
+    if os.getenv("REDIS_CONTINUOUS"):
+        source["continuous"] = os.getenv("REDIS_CONTINUOUS").lower() in ("true", "1", "yes")
 
     # Sink overrides
     sink = config_data.setdefault("sink", {})
@@ -255,3 +270,11 @@ def _apply_env_overrides(config_data: dict) -> None:
         telemetry["otlp_endpoint"] = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
     if os.getenv("OTEL_SERVICE_NAME"):
         telemetry["service_name"] = os.getenv("OTEL_SERVICE_NAME")
+
+    # Pipeline overrides
+    pipeline = config_data.setdefault("pipeline", {})
+
+    if os.getenv("PIPELINE_FLUSH_INTERVAL_SECONDS"):
+        pipeline["flush_interval_seconds"] = int(os.getenv("PIPELINE_FLUSH_INTERVAL_SECONDS"))
+    if os.getenv("PIPELINE_FLUSH_INTERVAL_BATCHES"):
+        pipeline["flush_interval_batches"] = int(os.getenv("PIPELINE_FLUSH_INTERVAL_BATCHES"))

@@ -20,6 +20,7 @@ class LocalSink(DataSink):
     Local filesystem data sink that writes Arrow data to local disk in Parquet format.
 
     Supports partitioning and compression for efficient analytics.
+    Batches are buffered in memory and written as Parquet files only when flush() is called.
     """
 
     def __init__(
@@ -40,6 +41,7 @@ class LocalSink(DataSink):
         self.compression = compression
         self.partition_by = partition_by or []
         self.file_counter = 0
+        self.buffered_batches: list[pa.RecordBatch] = []
 
     def connect(self) -> None:
         """Establish connection (create base directory if needed)."""
@@ -58,21 +60,36 @@ class LocalSink(DataSink):
         self, batch: pa.RecordBatch, partition_cols: Optional[list[str]] = None
     ) -> None:
         """
-        Write a batch of data to local filesystem.
+        Buffer a batch of data in memory. Data is written to disk only when flush() is called.
 
         Args:
-            batch: Arrow RecordBatch to write
-            partition_cols: Optional list of column names to use for partitioning
+            batch: Arrow RecordBatch to buffer
+            partition_cols: Optional list of column names to use for partitioning (stored for flush)
         """
         with tracer.start_as_current_span("local_write_batch") as span:
             span.set_attribute("batch.num_rows", batch.num_rows)
 
-            try:
-                # Use provided partition columns or default
-                parts = partition_cols or self.partition_by
+            # Buffer the batch in memory
+            self.buffered_batches.append(batch)
+            logger.debug(
+                "Buffered batch: %d rows (total buffered: %d batches)",
+                batch.num_rows,
+                len(self.buffered_batches),
+            )
 
-                # Convert batch to table
-                table = pa.Table.from_batches([batch])
+    def flush(self) -> None:
+        """Flush buffered batches to disk as a Parquet file."""
+        if not self.buffered_batches:
+            logger.debug("No buffered batches to flush")
+            return
+
+        with tracer.start_as_current_span("local_flush") as span:
+            try:
+                # Combine all buffered batches into a single table
+                table = pa.Table.from_batches(self.buffered_batches)
+                num_batches = len(self.buffered_batches)
+                span.set_attribute("flush.num_batches", num_batches)
+                span.set_attribute("flush.num_rows", table.num_rows)
 
                 # Generate file path with timestamp and counter
                 timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
@@ -80,9 +97,9 @@ class LocalSink(DataSink):
 
                 # Build path with partitions
                 path_parts = []
-                if parts and table.num_rows > 0:
+                if self.partition_by and table.num_rows > 0:
                     # Create partition directories
-                    for col in parts:
+                    for col in self.partition_by:
                         if col in table.column_names:
                             # Get first value for partition (simple partitioning)
                             val = table[col][0].as_py()
@@ -107,21 +124,21 @@ class LocalSink(DataSink):
                     version="2.6",
                 )
 
+                file_size = file_path.stat().st_size
                 logger.info(
-                    "Wrote batch to local: %s (%d rows, %d bytes)",
+                    "Flushed %d batches to local: %s (%d rows, %d bytes)",
+                    num_batches,
                     file_path,
                     table.num_rows,
-                    file_path.stat().st_size,
+                    file_size,
                 )
 
-            except Exception as e:
-                logger.error("Error writing batch to local filesystem: %s", e, exc_info=True)
-                raise
+                # Clear the buffer
+                self.buffered_batches.clear()
 
-    def flush(self) -> None:
-        """Flush any buffered data to disk."""
-        # Local writes are immediate, no buffering needed
-        pass
+            except Exception as e:
+                logger.error("Error flushing batches to local filesystem: %s", e, exc_info=True)
+                raise
 
     def close(self) -> None:
         """Close the connection."""

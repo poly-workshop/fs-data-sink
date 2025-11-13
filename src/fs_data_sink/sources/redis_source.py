@@ -31,6 +31,7 @@ class RedisSource(DataSource):
         list_keys: Optional[list[str]] = None,
         value_format: str = "json",
         block_timeout: int = 1000,
+        continuous: bool = True,
         redis_config: Optional[dict] = None,
     ):
         """
@@ -45,6 +46,7 @@ class RedisSource(DataSource):
             list_keys: List of Redis list keys to read from
             value_format: Format of message values ('json' or 'arrow_ipc')
             block_timeout: Timeout in milliseconds for blocking operations
+            continuous: If True, continuously consume data in a loop; if False, read once and stop
             redis_config: Additional Redis configuration
         """
         self.host = host
@@ -55,6 +57,7 @@ class RedisSource(DataSource):
         self.list_keys = list_keys or []
         self.value_format = value_format
         self.block_timeout = block_timeout
+        self.continuous = continuous
         self.redis_config = redis_config or {}
         self.client: Optional[redis.Redis] = None
         self.stream_ids: dict[str, str] = dict.fromkeys(self.stream_keys, "0")
@@ -79,7 +82,7 @@ class RedisSource(DataSource):
             self.client.ping()
             logger.info("Successfully connected to Redis")
 
-    def read_batch(self, batch_size: int = 1000) -> Iterator[pa.RecordBatch]:
+    def read_batch(self, batch_size: int = 1000) -> Iterator[Optional[pa.RecordBatch]]:
         """
         Read data batches from Redis.
 
@@ -87,35 +90,48 @@ class RedisSource(DataSource):
             batch_size: Number of messages to accumulate per batch
 
         Yields:
-            Arrow RecordBatch containing the data
+            Arrow RecordBatch containing the data, or None when no data is available
+            (to allow pipeline to check flush conditions without blocking)
         """
         if not self.client:
             raise RuntimeError("Not connected. Call connect() first.")
 
         with tracer.start_as_current_span("redis_read_batch"):
-            messages = []
+            # Continuously read and yield batches if continuous mode is enabled
+            while True:
+                messages = []
 
-            # Read from streams if configured
-            if self.stream_keys:
-                messages.extend(self._read_from_streams(batch_size))
+                # Read from streams if configured
+                if self.stream_keys:
+                    messages.extend(self._read_from_streams(batch_size))
 
-            # Read from lists if configured
-            if self.list_keys:
-                messages.extend(self._read_from_lists(batch_size - len(messages)))
+                # Read from lists if configured
+                if self.list_keys:
+                    messages.extend(self._read_from_lists(batch_size - len(messages)))
 
-            if messages:
-                if self.value_format == "json":
-                    batch = self._json_to_arrow_batch(messages)
-                    logger.debug("Created batch with %d records", len(messages))
-                    yield batch
-                elif self.value_format == "arrow_ipc":
-                    # Process Arrow IPC messages
-                    for msg in messages:
-                        try:
-                            reader = pa.ipc.open_stream(msg)
-                            yield from reader
-                        except Exception as e:
-                            logger.error("Error processing Arrow IPC message: %s", e)
+                if messages:
+                    if self.value_format == "json":
+                        batch = self._json_to_arrow_batch(messages)
+                        logger.debug("Created batch with %d records", len(messages))
+                        yield batch
+                    elif self.value_format == "arrow_ipc":
+                        # Process Arrow IPC messages
+                        for msg in messages:
+                            try:
+                                reader = pa.ipc.open_stream(msg)
+                                yield from reader
+                            except Exception as e:
+                                logger.error("Error processing Arrow IPC message: %s", e)
+                else:
+                    # Yield None when no data is available to allow pipeline to check flush conditions
+                    # This makes read_batch non-blocking so time-based flushes can be checked
+                    if self.continuous:
+                        logger.debug("No messages found, yielding None to allow flush checks")
+                        yield None
+
+                # If not in continuous mode, exit after one iteration
+                if not self.continuous:
+                    break
 
     def _read_from_streams(self, batch_size: int) -> list:
         """Read messages from Redis streams."""

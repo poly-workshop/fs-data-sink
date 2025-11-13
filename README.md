@@ -8,6 +8,8 @@ Apache Arrow data pipeline that reads and transfers data from Kafka or Redis to 
 - **Multiple Sinks**: Write to S3 or HDFS
 - **Apache Arrow**: Native Arrow support for high-performance data processing
 - **Parquet Format**: Efficient columnar storage with compression
+- **Batch Buffering**: Accumulate multiple batches in memory and write as single Parquet files on flush
+- **Configurable Flushing**: Flush based on time intervals or batch counts
 - **Partitioning**: Support for data partitioning by columns
 - **OpenTelemetry**: Built-in observability with traces and metrics
 - **Flexible Configuration**: YAML files, environment variables, or CLI options
@@ -172,13 +174,19 @@ source:
     - list1
   value_format: json  # or arrow_ipc
   batch_size: 1000
+  continuous: true  # Continuously consume data (default: true)
 ```
+
+The Redis source supports two consumption modes:
+- **Continuous mode** (default): Continuously polls Redis for new data, similar to Kafka consumer
+- **One-shot mode**: Reads available data once and stops
 
 Environment variables:
 - `REDIS_HOST`: Redis host
 - `REDIS_PORT`: Redis port
 - `REDIS_PASSWORD`: Redis password
 - `REDIS_STREAM_KEYS`: Comma-separated list of stream keys
+- `REDIS_CONTINUOUS`: Enable continuous consumption (true/false)
 
 ### Sink Configuration
 
@@ -260,7 +268,51 @@ pipeline:
   max_batches: null  # null for unlimited
   batch_timeout_seconds: 30
   error_handling: log  # log, raise, or ignore
+  flush_interval_seconds: null  # Flush interval in seconds (null = flush only at end)
+  flush_interval_batches: null  # Flush after N batches (null = flush only at end)
 ```
+
+**Flush Interval and Batching:**
+
+The pipeline uses an efficient batching strategy where data is buffered in memory and written to Parquet files only when flushed. This reduces the number of small files created and improves performance.
+
+**Flush Behavior:**
+- Batches are accumulated in memory via `write_batch()` calls
+- Parquet files are written to disk/S3/HDFS only when `flush()` is called
+- Multiple buffered batches are combined into a single Parquet file per flush
+
+**Flush Triggers:**
+
+By default, the sink is flushed only when the pipeline completes. You can configure periodic flushing based on:
+
+- **Time interval** (`flush_interval_seconds`): Flush after a specified number of seconds
+- **Batch count** (`flush_interval_batches`): Flush after processing a specified number of batches
+
+If both are set, the sink will flush when either condition is met.
+
+**Non-blocking Behavior:**
+
+Sources are non-blocking to enable time-based flushes even when no data is available:
+- When no data is available from the source, the generator yields `None`
+- This allows the pipeline to check flush conditions (time-based) without blocking
+- Previously, the pipeline would block waiting for data, preventing time-based flushes
+
+Example with flush intervals:
+```yaml
+pipeline:
+  flush_interval_seconds: 60    # Flush every 60 seconds
+  flush_interval_batches: 100   # OR flush every 100 batches
+```
+
+**Benefits:**
+- Fewer, larger Parquet files instead of many small files
+- Better compression ratios
+- Reduced I/O operations
+- Improved query performance in analytics databases
+
+Environment variables:
+- `PIPELINE_FLUSH_INTERVAL_SECONDS`: Flush interval in seconds
+- `PIPELINE_FLUSH_INTERVAL_BATCHES`: Flush interval in batches
 
 ## Data Formats
 

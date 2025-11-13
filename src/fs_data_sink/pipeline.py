@@ -1,6 +1,7 @@
 """Main data pipeline orchestration."""
 
 import logging
+import time
 from typing import Optional
 
 from opentelemetry import metrics, trace
@@ -73,6 +74,7 @@ class DataPipeline:
                 stream_keys=source_config.stream_keys,
                 list_keys=source_config.list_keys,
                 value_format=source_config.value_format,
+                continuous=source_config.continuous,
                 redis_config=source_config.extra_config,
             )
 
@@ -149,8 +151,36 @@ class DataPipeline:
                 total_records = 0
                 max_batches = self.settings.pipeline.max_batches
 
+                # Flush tracking
+                last_flush_time = time.time()
+                batches_since_flush = 0
+                flush_interval_seconds = self.settings.pipeline.flush_interval_seconds
+                flush_interval_batches = self.settings.pipeline.flush_interval_batches
+
                 for batch in self.source.read_batch(self.settings.source.batch_size):
                     try:
+                        # Check if flush is needed based on time interval (even when no data)
+                        current_time = time.time()
+                        should_flush = False
+                        flush_reason = None
+
+                        if (
+                            flush_interval_seconds
+                            and (current_time - last_flush_time) >= flush_interval_seconds
+                        ):
+                            should_flush = True
+                            flush_reason = f"time interval ({flush_interval_seconds}s)"
+
+                        # If batch is None (no data available), just check time-based flush
+                        if batch is None:
+                            if should_flush:
+                                logger.info("Flushing sink (reason: %s)", flush_reason)
+                                self.sink.flush()
+                                last_flush_time = current_time
+                                batches_since_flush = 0
+                            continue
+
+                        # Process the batch
                         with tracer.start_as_current_span("process_batch") as batch_span:
                             num_rows = batch.num_rows
                             batch_span.set_attribute("batch.num_rows", num_rows)
@@ -161,6 +191,7 @@ class DataPipeline:
                             )
 
                             batch_count += 1
+                            batches_since_flush += 1
                             total_records += num_rows
 
                             # Update metrics
@@ -186,6 +217,20 @@ class DataPipeline:
                                 total_records,
                             )
 
+                            # Check if flush is needed (time-based already checked, now check batch-based)
+                            if not should_flush and (
+                                flush_interval_batches
+                                and batches_since_flush >= flush_interval_batches
+                            ):
+                                should_flush = True
+                                flush_reason = f"batch count ({flush_interval_batches} batches)"
+
+                            if should_flush:
+                                logger.info("Flushing sink (reason: %s)", flush_reason)
+                                self.sink.flush()
+                                last_flush_time = current_time
+                                batches_since_flush = 0
+
                             # Check if max batches reached
                             if max_batches and batch_count >= max_batches:
                                 logger.info("Reached max batches limit: %d", max_batches)
@@ -203,8 +248,8 @@ class DataPipeline:
                             logger.error("Error processing batch: %s", e, exc_info=True)
                         # else: ignore
 
-                # Flush sink
-                logger.info("Flushing sink")
+                # Final flush at the end
+                logger.info("Flushing sink (final)")
                 self.sink.flush()
 
                 logger.info(
