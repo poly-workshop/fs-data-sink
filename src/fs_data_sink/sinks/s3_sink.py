@@ -369,7 +369,7 @@ class S3Sink(DataSink):
                     buffer = BytesIO(data)
                     parquet_file = pq.ParquetFile(buffer)
                     table = parquet_file.read(use_pandas_metadata=False)
-                    
+
                     # Convert any dictionary-encoded columns to regular columns
                     columns = []
                     for i, field in enumerate(table.schema):
@@ -378,7 +378,7 @@ class S3Sink(DataSink):
                             columns.append(column.dictionary_decode())
                         else:
                             columns.append(column)
-                    
+
                     # Rebuild table without dictionary encoding
                     if columns:
                         schema = pa.schema([
@@ -389,7 +389,7 @@ class S3Sink(DataSink):
                             for field in table.schema
                         ])
                         table = pa.Table.from_arrays(columns, schema=schema)
-                    
+
                     tables.append(table)
 
                 except Exception as e:

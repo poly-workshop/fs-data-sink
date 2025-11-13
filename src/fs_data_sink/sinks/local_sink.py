@@ -182,7 +182,7 @@ class LocalSink(DataSink):
             try:
                 # Find all directories to process (including partitioned directories)
                 dirs_to_process = [self.base_path]
-                
+
                 # If partitioned, include partition directories
                 if self.partition_by:
                     for root, dirs, _ in self.base_path.walk():
@@ -225,10 +225,10 @@ class LocalSink(DataSink):
         from collections import defaultdict
 
         groups = defaultdict(list)
-        
+
         # Find all parquet files in the directory
         parquet_files = list(directory.glob("data_*.parquet"))
-        
+
         for file_path in parquet_files:
             try:
                 # Extract timestamp from filename (format: data_YYYYMMDD_HHMMSS_*.parquet)
@@ -236,16 +236,16 @@ class LocalSink(DataSink):
                 parts = filename.split("_")
                 if len(parts) < 3:
                     continue
-                
+
                 date_str = parts[1]  # YYYYMMDD
                 time_str = parts[2]  # HHMMSS
-                
+
                 # Parse timestamp
                 year = date_str[0:4]
                 month = date_str[4:6]
                 day = date_str[6:8]
                 hour = time_str[0:2]
-                
+
                 # Group by period
                 if period == "hour":
                     group_key = f"{year}{month}{day}_{hour}"
@@ -262,13 +262,13 @@ class LocalSink(DataSink):
                 else:
                     logger.warning("Unknown merge period: %s, using 'day'", period)
                     group_key = f"{year}{month}{day}"
-                
+
                 groups[group_key].append(file_path)
-                
+
             except (ValueError, IndexError) as e:
                 logger.warning("Could not parse timestamp from file %s: %s", file_path, e)
                 continue
-        
+
         return groups
 
     def _merge_file_group(
@@ -277,7 +277,7 @@ class LocalSink(DataSink):
         """Merge a group of files into a single consolidated file."""
         try:
             logger.info("Merging %d files for period %s", len(files), period_key)
-            
+
             # Read all files (avoid dictionary encoding for easier merging)
             tables = []
             for file_path in files:
@@ -285,7 +285,7 @@ class LocalSink(DataSink):
                     # Read table without dictionary encoding to avoid schema conflicts
                     parquet_file = pq.ParquetFile(file_path)
                     table = parquet_file.read(use_pandas_metadata=False)
-                    
+
                     # Convert any dictionary-encoded columns to regular columns
                     columns = []
                     for i, field in enumerate(table.schema):
@@ -294,7 +294,7 @@ class LocalSink(DataSink):
                             columns.append(column.dictionary_decode())
                         else:
                             columns.append(column)
-                    
+
                     # Rebuild table without dictionary encoding
                     if columns:
                         schema = pa.schema([
@@ -305,23 +305,23 @@ class LocalSink(DataSink):
                             for field in table.schema
                         ])
                         table = pa.Table.from_arrays(columns, schema=schema)
-                    
+
                     tables.append(table)
                 except Exception as e:
                     logger.error("Failed to read file %s: %s", file_path, e)
                     continue
-            
+
             if not tables:
                 logger.warning("No tables to merge for period %s", period_key)
                 return 0
-            
+
             # Concatenate all tables
             merged_table = pa.concat_tables(tables)
-            
+
             # Generate merged filename
             merged_filename = f"merged_{period_key}.parquet"
             merged_path = directory / merged_filename
-            
+
             # Write merged file (without forcing dictionary encoding)
             pq.write_table(
                 merged_table,
@@ -330,7 +330,7 @@ class LocalSink(DataSink):
                 use_dictionary=False,  # Don't use dictionary encoding for merged files
                 version="2.6",
             )
-            
+
             merged_size = merged_path.stat().st_size
             logger.info(
                 "Created merged file: %s (%d rows, %d bytes)",
@@ -338,7 +338,7 @@ class LocalSink(DataSink):
                 merged_table.num_rows,
                 merged_size,
             )
-            
+
             # Delete original files
             for file_path in files:
                 try:
@@ -346,9 +346,9 @@ class LocalSink(DataSink):
                     logger.debug("Deleted original file: %s", file_path)
                 except Exception as e:
                     logger.error("Failed to delete file %s: %s", file_path, e)
-            
+
             return len(files)
-            
+
         except Exception as e:
             logger.error("Error merging files for period %s: %s", period_key, e, exc_info=True)
             return 0

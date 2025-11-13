@@ -57,11 +57,11 @@ class DataSink(ABC):
     def merge_files(self, period: Optional[str] = None) -> int:
         """
         Merge small Parquet files into larger consolidated files.
-        
+
         Args:
             period: Time period for grouping files ('hour', 'day', 'week', 'month')
                    If None, uses the sink's configured merge_period
-        
+
         Returns:
             Number of files merged
         """

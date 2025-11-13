@@ -61,7 +61,7 @@ class SinkConfig:
     compression: str = "snappy"
     partition_by: Optional[list[str]] = None
     extra_config: dict = field(default_factory=dict)
-    
+
     # Merge configuration
     merge_enabled: bool = False
     merge_period: str = "hour"  # 'hour', 'day', 'week', 'month'
