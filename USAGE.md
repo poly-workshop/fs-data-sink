@@ -56,6 +56,7 @@ export SOURCE_TYPE=redis
 export REDIS_HOST=localhost
 export REDIS_PORT=6379
 export REDIS_STREAM_KEYS=sensor-data,user-events
+export REDIS_CONSUMER_GROUP=fs-data-sink-group  # Required for Redis Streams
 
 export SINK_TYPE=hdfs
 export HDFS_URL=http://namenode:9870
@@ -153,6 +154,8 @@ source:
     - queue:tasks
   value_format: json  # or arrow_ipc
   batch_size: 1000
+  consumer_group: fs-data-sink-group  # Required for Redis Streams
+  consumer_name: optional  # Defaults to hostname-id if not provided
   extra_config:
     # Any additional Redis client configuration
     socket_timeout: 5
@@ -232,6 +235,8 @@ All configuration can be overridden with environment variables:
 - `REDIS_PORT`: Redis port
 - `REDIS_PASSWORD`: Redis password
 - `REDIS_STREAM_KEYS`: comma-separated
+- `REDIS_CONSUMER_GROUP`: consumer group (required for streams)
+- `REDIS_CONSUMER_NAME`: consumer name (optional)
 
 #### Sink
 - `SINK_TYPE`: s3 or hdfs
