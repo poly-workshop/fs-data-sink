@@ -1,0 +1,41 @@
+# Example configuration: Kafka to S3 with automatic file merging
+source:
+  type: kafka
+  bootstrap_servers:
+    - localhost:9092
+  topics:
+    - data-topic
+  group_id: fs-data-sink-group
+  value_format: json  # or arrow_ipc
+  batch_size: 1000
+
+sink:
+  type: s3
+  bucket: my-data-bucket
+  prefix: raw-data
+  region_name: us-east-1
+  compression: snappy  # snappy, gzip, brotli, zstd, none
+  partition_by:
+    - date
+    - hour
+  # File merging configuration
+  merge_enabled: true        # Enable automatic file merging
+  merge_period: hour         # Merge files by hour (hour, day, week, month)
+  merge_min_files: 5         # Require at least 5 files to trigger merge
+  merge_on_flush: false      # Don't merge on every flush (merge separately)
+
+telemetry:
+  log_level: INFO
+  log_format: json  # json or text
+  enabled: true
+  service_name: fs-data-sink
+  otlp_endpoint: http://localhost:4317
+  trace_enabled: true
+  metrics_enabled: true
+
+pipeline:
+  max_batches: null  # null for unlimited
+  batch_timeout_seconds: 30
+  error_handling: log  # log, raise, or ignore
+  flush_interval_seconds: 300  # Flush every 5 minutes
+  flush_interval_batches: 100  # Or flush after 100 batches

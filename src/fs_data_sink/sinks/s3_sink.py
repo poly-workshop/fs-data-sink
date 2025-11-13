@@ -38,6 +38,10 @@ class S3Sink(DataSink):
         partition_by: Optional[list[str]] = None,
         s3_config: Optional[dict] = None,
         secure: bool = True,
+        merge_enabled: bool = False,
+        merge_period: str = "hour",
+        merge_min_files: int = 2,
+        merge_on_flush: bool = False,
     ):
         """
         Initialize S3 sink with MinIO client.
@@ -53,6 +57,10 @@ class S3Sink(DataSink):
             partition_by: List of column names to partition by
             s3_config: Additional MinIO client configuration
             secure: Use HTTPS for connections (default: True)
+            merge_enabled: Enable automatic file merging
+            merge_period: Period for merging files ('hour', 'day', 'week', 'month')
+            merge_min_files: Minimum number of files to trigger a merge
+            merge_on_flush: Merge files during flush operations
         """
         self.bucket = bucket
         self.prefix = prefix.rstrip("/")
@@ -64,6 +72,10 @@ class S3Sink(DataSink):
         self.partition_by = partition_by or []
         self.s3_config = s3_config or {}
         self.secure = secure
+        self.merge_enabled = merge_enabled
+        self.merge_period = merge_period
+        self.merge_min_files = merge_min_files
+        self.merge_on_flush = merge_on_flush
         self.s3_client = None
         self.file_counter = 0
         self.buffered_batches: list[pa.RecordBatch] = []
@@ -211,12 +223,234 @@ class S3Sink(DataSink):
                 # Clear the buffer
                 self.buffered_batches.clear()
 
+                # Optionally merge files after flush
+                if self.merge_enabled and self.merge_on_flush:
+                    logger.info("Merging files after flush")
+                    self.merge_files()
+
             except S3Error as e:
                 logger.error("S3 error flushing batches: %s", e, exc_info=True)
                 raise
             except Exception as e:
                 logger.error("Unexpected error flushing batches to S3: %s", e, exc_info=True)
                 raise
+
+    def merge_files(self, period: Optional[str] = None) -> int:
+        """
+        Merge small Parquet files into larger consolidated files by time period.
+
+        Args:
+            period: Time period for grouping files ('hour', 'day', 'week', 'month')
+                   If None, uses the sink's configured merge_period
+
+        Returns:
+            Number of files merged
+        """
+        if not self.merge_enabled:
+            logger.debug("File merging is disabled")
+            return 0
+
+        if not self.s3_client:
+            raise RuntimeError("Not connected. Call connect() first.")
+
+        merge_period = period or self.merge_period
+        logger.info("Starting S3 file merge with period: %s", merge_period)
+
+        with tracer.start_as_current_span("s3_merge") as span:
+            span.set_attribute("merge.period", merge_period)
+            total_merged = 0
+
+            try:
+                # List all objects with the prefix
+                objects = self.s3_client.list_objects(
+                    bucket_name=self.bucket, prefix=self.prefix, recursive=True
+                )
+
+                # Group objects by directory and time period
+                from collections import defaultdict
+                dir_groups = defaultdict(lambda: defaultdict(list))
+
+                for obj in objects:
+                    if not obj.object_name.endswith(".parquet"):
+                        continue
+                    if obj.object_name.startswith(f"{self.prefix}/merged_" if self.prefix else "merged_"):
+                        # Skip already merged files
+                        continue
+
+                    # Get directory path
+                    obj_dir = "/".join(obj.object_name.split("/")[:-1])
+                    filename = obj.object_name.split("/")[-1]
+
+                    # Extract period from filename
+                    period_key = self._extract_period_from_filename(filename, merge_period)
+                    if period_key:
+                        dir_groups[obj_dir][period_key].append(obj)
+
+                # Merge files in each directory/period group
+                for obj_dir, period_groups in dir_groups.items():
+                    for period_key, objects_list in period_groups.items():
+                        if len(objects_list) < self.merge_min_files:
+                            logger.debug(
+                                "Skipping merge for %s/%s: only %d files (min: %d)",
+                                obj_dir,
+                                period_key,
+                                len(objects_list),
+                                self.merge_min_files,
+                            )
+                            continue
+
+                        # Merge files in this period
+                        merged = self._merge_s3_file_group(obj_dir, period_key, objects_list)
+                        total_merged += merged
+
+                span.set_attribute("merge.files_merged", total_merged)
+                logger.info("S3 merge completed: %d files merged", total_merged)
+                return total_merged
+
+            except S3Error as e:
+                logger.error("S3 error during merge: %s", e, exc_info=True)
+                raise
+            except Exception as e:
+                logger.error("Error during S3 file merge: %s", e, exc_info=True)
+                raise
+
+    def _extract_period_from_filename(self, filename: str, period: str) -> Optional[str]:
+        """Extract time period key from filename."""
+        try:
+            # Filename format: data_YYYYMMDD_HHMMSS_*.parquet
+            parts = filename.split("_")
+            if len(parts) < 3 or not filename.startswith("data_"):
+                return None
+
+            date_str = parts[1]  # YYYYMMDD
+            time_str = parts[2]  # HHMMSS
+
+            year = date_str[0:4]
+            month = date_str[4:6]
+            day = date_str[6:8]
+            hour = time_str[0:2]
+
+            if period == "hour":
+                return f"{year}{month}{day}_{hour}"
+            elif period == "day":
+                return f"{year}{month}{day}"
+            elif period == "week":
+                from datetime import datetime
+                dt = datetime(int(year), int(month), int(day))
+                week = dt.isocalendar()[1]
+                return f"{year}W{week:02d}"
+            elif period == "month":
+                return f"{year}{month}"
+            else:
+                return f"{year}{month}{day}"
+
+        except (ValueError, IndexError) as e:
+            logger.warning("Could not parse timestamp from filename %s: %s", filename, e)
+            return None
+
+    def _merge_s3_file_group(self, obj_dir: str, period_key: str, objects_list: list) -> int:
+        """Merge a group of S3 objects into a single consolidated file."""
+        try:
+            logger.info("Merging %d S3 objects for period %s in %s", len(objects_list), period_key, obj_dir)
+
+            # Download and read all objects (avoid dictionary encoding for easier merging)
+            tables = []
+            for obj in objects_list:
+                try:
+                    # Download object to memory
+                    response = self.s3_client.get_object(
+                        bucket_name=self.bucket, object_name=obj.object_name
+                    )
+                    data = response.read()
+                    response.close()
+                    response.release_conn()
+
+                    # Read as parquet
+                    buffer = BytesIO(data)
+                    parquet_file = pq.ParquetFile(buffer)
+                    table = parquet_file.read(use_pandas_metadata=False)
+                    
+                    # Convert any dictionary-encoded columns to regular columns
+                    columns = []
+                    for i, field in enumerate(table.schema):
+                        column = table.column(i)
+                        if pa.types.is_dictionary(field.type):
+                            columns.append(column.dictionary_decode())
+                        else:
+                            columns.append(column)
+                    
+                    # Rebuild table without dictionary encoding
+                    if columns:
+                        schema = pa.schema([
+                            pa.field(
+                                field.name,
+                                field.type.value_type if pa.types.is_dictionary(field.type) else field.type
+                            )
+                            for field in table.schema
+                        ])
+                        table = pa.Table.from_arrays(columns, schema=schema)
+                    
+                    tables.append(table)
+
+                except Exception as e:
+                    logger.error("Failed to read S3 object %s: %s", obj.object_name, e)
+                    continue
+
+            if not tables:
+                logger.warning("No tables to merge for period %s", period_key)
+                return 0
+
+            # Concatenate all tables
+            merged_table = pa.concat_tables(tables)
+
+            # Generate merged object name
+            merged_name = f"merged_{period_key}.parquet"
+            merged_key = f"{obj_dir}/{merged_name}" if obj_dir else merged_name
+
+            # Write merged file to buffer (without forcing dictionary encoding)
+            buffer = BytesIO()
+            pq.write_table(
+                merged_table,
+                buffer,
+                compression=self.compression,
+                use_dictionary=False,  # Don't use dictionary encoding for merged files
+                version="2.6",
+            )
+
+            # Upload merged file
+            buffer.seek(0)
+            data_length = len(buffer.getvalue())
+            self.s3_client.put_object(
+                bucket_name=self.bucket,
+                object_name=merged_key,
+                data=buffer,
+                length=data_length,
+                content_type="application/octet-stream",
+            )
+
+            logger.info(
+                "Created merged S3 object: s3://%s/%s (%d rows, %d bytes)",
+                self.bucket,
+                merged_key,
+                merged_table.num_rows,
+                data_length,
+            )
+
+            # Delete original objects
+            for obj in objects_list:
+                try:
+                    self.s3_client.remove_object(
+                        bucket_name=self.bucket, object_name=obj.object_name
+                    )
+                    logger.debug("Deleted original S3 object: %s", obj.object_name)
+                except Exception as e:
+                    logger.error("Failed to delete S3 object %s: %s", obj.object_name, e)
+
+            return len(objects_list)
+
+        except Exception as e:
+            logger.error("Error merging S3 files for period %s: %s", period_key, e, exc_info=True)
+            return 0
 
     def close(self) -> None:
         """Close the S3 connection."""
