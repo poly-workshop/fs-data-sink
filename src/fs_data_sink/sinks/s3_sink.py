@@ -156,7 +156,7 @@ class S3Sink(DataSink):
             )
 
     def flush(self) -> None:
-        """Flush buffered batches to S3 as a Parquet file."""
+        """Flush buffered batches to S3 as Parquet files, grouped by topic/stream_key."""
         if not self.buffered_batches:
             logger.debug("No buffered batches to flush")
             return
@@ -166,59 +166,35 @@ class S3Sink(DataSink):
 
         with tracer.start_as_current_span("s3_flush") as span:
             try:
-                # Combine all buffered batches into a single table
-                table = pa.Table.from_batches(self.buffered_batches)
-                num_batches = len(self.buffered_batches)
-                span.set_attribute("flush.num_batches", num_batches)
-                span.set_attribute("flush.num_rows", table.num_rows)
+                # Group batches by topic/stream_key from metadata
+                batches_by_source = {}
+                for batch in self.buffered_batches:
+                    # Extract topic or stream_key from schema metadata
+                    topic = None
+                    stream_key = None
+                    if batch.schema.metadata:
+                        topic = batch.schema.metadata.get(b'topic')
+                        stream_key = batch.schema.metadata.get(b'stream_key')
+                    
+                    # Use topic or stream_key as the source identifier
+                    source_id = None
+                    if topic:
+                        source_id = topic.decode() if isinstance(topic, bytes) else topic
+                    elif stream_key:
+                        source_id = stream_key.decode() if isinstance(stream_key, bytes) else stream_key
+                    
+                    # Group batches by source_id (default to 'default' if no metadata)
+                    if source_id not in batches_by_source:
+                        batches_by_source[source_id] = []
+                    batches_by_source[source_id].append(batch)
 
-                # Generate S3 key with timestamp and counter
-                timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-                self.file_counter += 1
+                # Flush each group separately
+                total_batches = len(self.buffered_batches)
+                span.set_attribute("flush.num_batches", total_batches)
+                span.set_attribute("flush.num_sources", len(batches_by_source))
 
-                # Build path with partitions
-                path_parts = [self.prefix] if self.prefix else []
-
-                if self.partition_by and table.num_rows > 0:
-                    # Create partition directories
-                    for col in self.partition_by:
-                        if col in table.column_names:
-                            # Get first value for partition (simple partitioning)
-                            val = table[col][0].as_py()
-                            path_parts.append(f"{col}={val}")
-
-                path_parts.append(f"data_{timestamp}_{self.file_counter:06d}.parquet")
-                s3_key = "/".join(path_parts)
-
-                # Write to buffer
-                buffer = BytesIO()
-                pq.write_table(
-                    table,
-                    buffer,
-                    compression=self.compression,
-                    use_dictionary=True,
-                    version="2.6",
-                )
-
-                # Upload to S3 using MinIO client
-                buffer.seek(0)
-                data_length = len(buffer.getvalue())
-                self.s3_client.put_object(
-                    bucket_name=self.bucket,
-                    object_name=s3_key,
-                    data=buffer,
-                    length=data_length,
-                    content_type="application/octet-stream",
-                )
-
-                logger.info(
-                    "Flushed %d batches to S3: s3://%s/%s (%d rows, %d bytes)",
-                    num_batches,
-                    self.bucket,
-                    s3_key,
-                    table.num_rows,
-                    data_length,
-                )
+                for source_id, batches in batches_by_source.items():
+                    self._flush_batches_for_source(source_id, batches)
 
                 # Clear the buffer
                 self.buffered_batches.clear()
@@ -234,6 +210,71 @@ class S3Sink(DataSink):
             except Exception as e:
                 logger.error("Unexpected error flushing batches to S3: %s", e, exc_info=True)
                 raise
+
+    def _flush_batches_for_source(self, source_id: Optional[str], batches: list[pa.RecordBatch]) -> None:
+        """
+        Flush batches for a specific topic/stream_key to S3.
+        
+        Args:
+            source_id: Topic name or stream_key (None for data without metadata)
+            batches: List of batches to flush
+        """
+        # Combine batches into a single table
+        table = pa.Table.from_batches(batches)
+        
+        # Generate S3 key with timestamp and counter
+        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        self.file_counter += 1
+
+        # Build path with topic/stream_key folder
+        path_parts = []
+        if self.prefix:
+            path_parts.append(self.prefix)
+        
+        # Add topic/stream_key as a folder level
+        if source_id:
+            path_parts.append(source_id)
+
+        if self.partition_by and table.num_rows > 0:
+            # Create partition directories
+            for col in self.partition_by:
+                if col in table.column_names:
+                    # Get first value for partition (simple partitioning)
+                    val = table[col][0].as_py()
+                    path_parts.append(f"{col}={val}")
+
+        path_parts.append(f"data_{timestamp}_{self.file_counter:06d}.parquet")
+        s3_key = "/".join(path_parts)
+
+        # Write to buffer
+        buffer = BytesIO()
+        pq.write_table(
+            table,
+            buffer,
+            compression=self.compression,
+            use_dictionary=True,
+            version="2.6",
+        )
+
+        # Upload to S3 using MinIO client
+        buffer.seek(0)
+        data_length = len(buffer.getvalue())
+        self.s3_client.put_object(
+            bucket_name=self.bucket,
+            object_name=s3_key,
+            data=buffer,
+            length=data_length,
+            content_type="application/octet-stream",
+        )
+
+        logger.info(
+            "Flushed %d batches to S3: s3://%s/%s (%d rows, %d bytes)",
+            len(batches),
+            self.bucket,
+            s3_key,
+            table.num_rows,
+            data_length,
+        )
 
     def merge_files(self, period: Optional[str] = None) -> int:
         """
