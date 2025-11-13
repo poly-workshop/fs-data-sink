@@ -1,4 +1,8 @@
 # Example configuration: Kafka to S3
+# 
+# Data from different topics will be stored in separate folders:
+# s3://my-data-bucket/raw-data/data-topic/date=2024-01-01/hour=12/data_*.parquet
+#
 source:
   type: kafka
   bootstrap_servers:

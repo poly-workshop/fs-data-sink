@@ -1,4 +1,9 @@
 # Example configuration: Redis to HDFS
+#
+# Data from different streams will be stored in separate folders:
+# hdfs://namenode:9870/data/raw/data-stream-1/date=2024-01-01/data_*.parquet
+# hdfs://namenode:9870/data/raw/data-stream-2/date=2024-01-01/data_*.parquet
+#
 source:
   type: redis
   host: localhost
