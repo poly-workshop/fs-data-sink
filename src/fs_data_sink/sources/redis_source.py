@@ -82,7 +82,7 @@ class RedisSource(DataSource):
             self.client.ping()
             logger.info("Successfully connected to Redis")
 
-    def read_batch(self, batch_size: int = 1000) -> Iterator[pa.RecordBatch | None]:
+    def read_batch(self, batch_size: int = 1000) -> Iterator[Optional[pa.RecordBatch]]:
         """
         Read data batches from Redis.
 

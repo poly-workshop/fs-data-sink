@@ -74,7 +74,7 @@ class KafkaSource(DataSource):
             self.consumer = KafkaConsumer(*self.topics, **config)
             logger.info("Successfully connected to Kafka")
 
-    def read_batch(self, batch_size: int = 1000) -> Iterator[pa.RecordBatch | None]:
+    def read_batch(self, batch_size: int = 1000) -> Iterator[Optional[pa.RecordBatch]]:
         """
         Read data batches from Kafka.
 
