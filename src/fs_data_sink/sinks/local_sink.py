@@ -226,9 +226,7 @@ class LocalSink(DataSink):
                 logger.error("Error during file merge: %s", e, exc_info=True)
                 raise
 
-    def _group_files_by_period(
-        self, directory: Path, period: str
-    ) -> dict[str, list[Path]]:
+    def _group_files_by_period(self, directory: Path, period: str) -> dict[str, list[Path]]:
         """Group Parquet files by time period based on filename timestamp."""
         from collections import defaultdict
 
@@ -262,6 +260,7 @@ class LocalSink(DataSink):
                 elif period == "week":
                     # Calculate week number
                     from datetime import datetime
+
                     dt = datetime(int(year), int(month), int(day))
                     week = dt.isocalendar()[1]
                     group_key = f"{year}W{week:02d}"
@@ -279,9 +278,7 @@ class LocalSink(DataSink):
 
         return groups
 
-    def _merge_file_group(
-        self, directory: Path, period_key: str, files: list[Path]
-    ) -> int:
+    def _merge_file_group(self, directory: Path, period_key: str, files: list[Path]) -> int:
         """Merge a group of files into a single consolidated file."""
         try:
             logger.info("Merging %d files for period %s", len(files), period_key)
@@ -305,13 +302,19 @@ class LocalSink(DataSink):
 
                     # Rebuild table without dictionary encoding
                     if columns:
-                        schema = pa.schema([
-                            pa.field(
-                                field.name,
-                                field.type.value_type if pa.types.is_dictionary(field.type) else field.type
-                            )
-                            for field in table.schema
-                        ])
+                        schema = pa.schema(
+                            [
+                                pa.field(
+                                    field.name,
+                                    (
+                                        field.type.value_type
+                                        if pa.types.is_dictionary(field.type)
+                                        else field.type
+                                    ),
+                                )
+                                for field in table.schema
+                            ]
+                        )
                         table = pa.Table.from_arrays(columns, schema=schema)
 
                     tables.append(table)

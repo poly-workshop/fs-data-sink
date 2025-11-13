@@ -266,9 +266,7 @@ class HDFSSink(DataSink):
                 logger.error("Error during HDFS file merge: %s", e, exc_info=True)
                 raise
 
-    def _group_hdfs_files_by_period(
-        self, directory: str, period: str
-    ) -> dict[str, list[str]]:
+    def _group_hdfs_files_by_period(self, directory: str, period: str) -> dict[str, list[str]]:
         """Group HDFS Parquet files by time period based on filename timestamp."""
         from collections import defaultdict
 
@@ -316,6 +314,7 @@ class HDFSSink(DataSink):
                 return f"{year}{month}{day}"
             elif period == "week":
                 from datetime import datetime
+
                 dt = datetime(int(year), int(month), int(day))
                 week = dt.isocalendar()[1]
                 return f"{year}W{week:02d}"
@@ -328,12 +327,12 @@ class HDFSSink(DataSink):
             logger.warning("Could not parse timestamp from filename %s: %s", filename, e)
             return None
 
-    def _merge_hdfs_file_group(
-        self, directory: str, period_key: str, files: list[str]
-    ) -> int:
+    def _merge_hdfs_file_group(self, directory: str, period_key: str, files: list[str]) -> int:
         """Merge a group of HDFS files into a single consolidated file."""
         try:
-            logger.info("Merging %d HDFS files for period %s in %s", len(files), period_key, directory)
+            logger.info(
+                "Merging %d HDFS files for period %s in %s", len(files), period_key, directory
+            )
 
             # Read all files (avoid dictionary encoding for easier merging)
             tables = []
@@ -356,13 +355,19 @@ class HDFSSink(DataSink):
 
                     # Rebuild table without dictionary encoding
                     if columns:
-                        schema = pa.schema([
-                            pa.field(
-                                field.name,
-                                field.type.value_type if pa.types.is_dictionary(field.type) else field.type
-                            )
-                            for field in table.schema
-                        ])
+                        schema = pa.schema(
+                            [
+                                pa.field(
+                                    field.name,
+                                    (
+                                        field.type.value_type
+                                        if pa.types.is_dictionary(field.type)
+                                        else field.type
+                                    ),
+                                )
+                                for field in table.schema
+                            ]
+                        )
                         table = pa.Table.from_arrays(columns, schema=schema)
 
                     tables.append(table)

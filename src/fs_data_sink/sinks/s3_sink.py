@@ -273,12 +273,15 @@ class S3Sink(DataSink):
 
                 # Group objects by directory and time period
                 from collections import defaultdict
+
                 dir_groups = defaultdict(lambda: defaultdict(list))
 
                 for obj in objects:
                     if not obj.object_name.endswith(".parquet"):
                         continue
-                    if obj.object_name.startswith(f"{self.prefix}/merged_" if self.prefix else "merged_"):
+                    if obj.object_name.startswith(
+                        f"{self.prefix}/merged_" if self.prefix else "merged_"
+                    ):
                         # Skip already merged files
                         continue
 
@@ -341,6 +344,7 @@ class S3Sink(DataSink):
                 return f"{year}{month}{day}"
             elif period == "week":
                 from datetime import datetime
+
                 dt = datetime(int(year), int(month), int(day))
                 week = dt.isocalendar()[1]
                 return f"{year}W{week:02d}"
@@ -356,7 +360,9 @@ class S3Sink(DataSink):
     def _merge_s3_file_group(self, obj_dir: str, period_key: str, objects_list: list) -> int:
         """Merge a group of S3 objects into a single consolidated file."""
         try:
-            logger.info("Merging %d S3 objects for period %s in %s", len(objects_list), period_key, obj_dir)
+            logger.info(
+                "Merging %d S3 objects for period %s in %s", len(objects_list), period_key, obj_dir
+            )
 
             # Download and read all objects (avoid dictionary encoding for easier merging)
             tables = []
@@ -386,13 +392,19 @@ class S3Sink(DataSink):
 
                     # Rebuild table without dictionary encoding
                     if columns:
-                        schema = pa.schema([
-                            pa.field(
-                                field.name,
-                                field.type.value_type if pa.types.is_dictionary(field.type) else field.type
-                            )
-                            for field in table.schema
-                        ])
+                        schema = pa.schema(
+                            [
+                                pa.field(
+                                    field.name,
+                                    (
+                                        field.type.value_type
+                                        if pa.types.is_dictionary(field.type)
+                                        else field.type
+                                    ),
+                                )
+                                for field in table.schema
+                            ]
+                        )
                         table = pa.Table.from_arrays(columns, schema=schema)
 
                     tables.append(table)
