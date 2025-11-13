@@ -82,14 +82,15 @@ class KafkaSource(DataSource):
             batch_size: Number of messages to accumulate per batch
 
         Yields:
-            Arrow RecordBatch containing the data, or None when no data is available
-            (to allow pipeline to check flush conditions without blocking)
+            Arrow RecordBatch containing the data with topic metadata, or None when no data
+            is available (to allow pipeline to check flush conditions without blocking)
         """
         if not self.consumer:
             raise RuntimeError("Not connected. Call connect() first.")
 
         with tracer.start_as_current_span("kafka_read_batch"):
-            messages = []
+            # Group messages by topic
+            messages_by_topic = {}
 
             while True:
                 # Poll for messages with timeout (non-blocking)
@@ -98,57 +99,97 @@ class KafkaSource(DataSource):
                 )
 
                 if not raw_messages:
-                    # No messages available - yield None to allow flush checks
-                    if messages:
-                        # Yield accumulated messages first
-                        batch = self._json_to_arrow_batch(messages)
-                        logger.debug("Created batch with %d records", len(messages))
-                        yield batch
-                        messages = []
+                    # No messages available - yield accumulated messages by topic first
+                    if messages_by_topic:
+                        for topic, messages in messages_by_topic.items():
+                            batch = self._json_to_arrow_batch(messages, topic)
+                            logger.debug(
+                                "Created batch with %d records from topic %s", len(messages), topic
+                            )
+                            yield batch
+                        messages_by_topic = {}
                     else:
-                        # No messages accumulated, yield None
+                        # No messages accumulated, yield None to allow flush checks
                         logger.debug("No messages from Kafka, yielding None to allow flush checks")
                         yield None
                     continue
 
                 # Process messages from poll
-                for _topic_partition, records in raw_messages.items():
+                for topic_partition, records in raw_messages.items():
+                    topic = topic_partition.topic
                     for message in records:
                         with tracer.start_as_current_span("kafka_process_message"):
                             try:
                                 if self.value_format == "json":
                                     data = json.loads(message.value.decode("utf-8"))
-                                    messages.append(data)
+                                    # Group messages by topic
+                                    if topic not in messages_by_topic:
+                                        messages_by_topic[topic] = []
+                                    messages_by_topic[topic].append(data)
                                 elif self.value_format == "arrow_ipc":
-                                    # Deserialize Arrow IPC format
+                                    # Deserialize Arrow IPC format and add topic metadata
                                     reader = pa.ipc.open_stream(message.value)
                                     for batch in reader:
-                                        yield batch
+                                        # Add topic metadata to the batch
+                                        schema_with_metadata = batch.schema.with_metadata(
+                                            {
+                                                **(batch.schema.metadata or {}),
+                                                b"topic": topic.encode(),
+                                            }
+                                        )
+                                        arrays = [batch.column(i) for i in range(batch.num_columns)]
+                                        batch_with_metadata = pa.record_batch(
+                                            arrays, schema=schema_with_metadata
+                                        )
+                                        yield batch_with_metadata
                                     continue
                                 else:
                                     raise ValueError(
                                         f"Unsupported value format: {self.value_format}"
                                     )
 
-                                if len(messages) >= batch_size:
-                                    # Convert accumulated JSON messages to Arrow RecordBatch
-                                    batch = self._json_to_arrow_batch(messages)
-                                    logger.debug("Created batch with %d records", len(messages))
+                                # Check if any topic has accumulated enough messages
+                                topics_to_yield = [
+                                    t
+                                    for t, msgs in messages_by_topic.items()
+                                    if len(msgs) >= batch_size
+                                ]
+                                for t in topics_to_yield:
+                                    batch = self._json_to_arrow_batch(messages_by_topic[t], t)
+                                    logger.debug(
+                                        "Created batch with %d records from topic %s",
+                                        len(messages_by_topic[t]),
+                                        t,
+                                    )
                                     yield batch
-                                    messages = []
+                                    del messages_by_topic[t]
 
                             except Exception as e:
                                 logger.error("Error processing message: %s", e, exc_info=True)
                                 continue
 
-    def _json_to_arrow_batch(self, messages: list[dict]) -> pa.RecordBatch:
-        """Convert a list of JSON messages to Arrow RecordBatch."""
+    def _json_to_arrow_batch(self, messages: list[dict], topic: str) -> pa.RecordBatch:
+        """
+        Convert a list of JSON messages to Arrow RecordBatch with topic metadata.
+
+        Args:
+            messages: List of JSON message dictionaries
+            topic: Kafka topic name
+
+        Returns:
+            Arrow RecordBatch with topic stored in schema metadata
+        """
         # Create a table from the list of dictionaries
         table = pa.Table.from_pylist(messages)
+        # Add topic metadata to schema
+        schema_with_metadata = table.schema.with_metadata({b"topic": topic.encode()})
+        # Rebuild table with metadata
+        table = pa.table(table.to_pydict(), schema=schema_with_metadata)
         # Convert to a single batch
         if table.num_rows > 0:
             return table.to_batches()[0]
-        return pa.record_batch([], schema=pa.schema([]))
+        # Return empty batch with metadata
+        return pa.record_batch([], schema=pa.schema([], metadata={b"topic": topic.encode()}))
 
     def close(self) -> None:
         """Close the Kafka consumer."""

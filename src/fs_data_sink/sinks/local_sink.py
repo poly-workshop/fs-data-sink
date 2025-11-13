@@ -91,60 +91,44 @@ class LocalSink(DataSink):
             )
 
     def flush(self) -> None:
-        """Flush buffered batches to disk as a Parquet file."""
+        """Flush buffered batches to disk as Parquet files, grouped by topic/stream_key."""
         if not self.buffered_batches:
             logger.debug("No buffered batches to flush")
             return
 
         with tracer.start_as_current_span("local_flush") as span:
             try:
-                # Combine all buffered batches into a single table
-                table = pa.Table.from_batches(self.buffered_batches)
-                num_batches = len(self.buffered_batches)
-                span.set_attribute("flush.num_batches", num_batches)
-                span.set_attribute("flush.num_rows", table.num_rows)
+                # Group batches by topic/stream_key from metadata
+                batches_by_source = {}
+                for batch in self.buffered_batches:
+                    # Extract topic or stream_key from schema metadata
+                    topic = None
+                    stream_key = None
+                    if batch.schema.metadata:
+                        topic = batch.schema.metadata.get(b"topic")
+                        stream_key = batch.schema.metadata.get(b"stream_key")
 
-                # Generate file path with timestamp and counter
-                timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-                self.file_counter += 1
+                    # Use topic or stream_key as the source identifier
+                    source_id = None
+                    if topic:
+                        source_id = topic.decode() if isinstance(topic, bytes) else topic
+                    elif stream_key:
+                        source_id = (
+                            stream_key.decode() if isinstance(stream_key, bytes) else stream_key
+                        )
 
-                # Build path with partitions
-                path_parts = []
-                if self.partition_by and table.num_rows > 0:
-                    # Create partition directories
-                    for col in self.partition_by:
-                        if col in table.column_names:
-                            # Get first value for partition (simple partitioning)
-                            val = table[col][0].as_py()
-                            path_parts.append(f"{col}={val}")
+                    # Group batches by source_id (default to None if no metadata)
+                    if source_id not in batches_by_source:
+                        batches_by_source[source_id] = []
+                    batches_by_source[source_id].append(batch)
 
-                # Construct full file path
-                if path_parts:
-                    file_dir = self.base_path / "/".join(path_parts)
-                else:
-                    file_dir = self.base_path
+                # Flush each group separately
+                total_batches = len(self.buffered_batches)
+                span.set_attribute("flush.num_batches", total_batches)
+                span.set_attribute("flush.num_sources", len(batches_by_source))
 
-                file_dir.mkdir(parents=True, exist_ok=True)
-                file_name = f"data_{timestamp}_{self.file_counter:06d}.parquet"
-                file_path = file_dir / file_name
-
-                # Write to local file
-                pq.write_table(
-                    table,
-                    file_path,
-                    compression=self.compression,
-                    use_dictionary=True,
-                    version="2.6",
-                )
-
-                file_size = file_path.stat().st_size
-                logger.info(
-                    "Flushed %d batches to local: %s (%d rows, %d bytes)",
-                    num_batches,
-                    file_path,
-                    table.num_rows,
-                    file_size,
-                )
+                for source_id, batches in batches_by_source.items():
+                    self._flush_batches_for_source(source_id, batches)
 
                 # Clear the buffer
                 self.buffered_batches.clear()
@@ -157,6 +141,66 @@ class LocalSink(DataSink):
             except Exception as e:
                 logger.error("Error flushing batches to local filesystem: %s", e, exc_info=True)
                 raise
+
+    def _flush_batches_for_source(
+        self, source_id: Optional[str], batches: list[pa.RecordBatch]
+    ) -> None:
+        """
+        Flush batches for a specific topic/stream_key to local filesystem.
+
+        Args:
+            source_id: Topic name or stream_key (None for data without metadata)
+            batches: List of batches to flush
+        """
+        # Combine batches into a single table
+        table = pa.Table.from_batches(batches)
+
+        # Generate file path with timestamp and counter
+        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        self.file_counter += 1
+
+        # Build path with topic/stream_key folder
+        path_parts = []
+
+        # Add topic/stream_key as a folder level
+        if source_id:
+            path_parts.append(source_id)
+
+        if self.partition_by and table.num_rows > 0:
+            # Create partition directories
+            for col in self.partition_by:
+                if col in table.column_names:
+                    # Get first value for partition (simple partitioning)
+                    val = table[col][0].as_py()
+                    path_parts.append(f"{col}={val}")
+
+        # Construct full file path
+        if path_parts:
+            file_dir = self.base_path / "/".join(path_parts)
+        else:
+            file_dir = self.base_path
+
+        file_dir.mkdir(parents=True, exist_ok=True)
+        file_name = f"data_{timestamp}_{self.file_counter:06d}.parquet"
+        file_path = file_dir / file_name
+
+        # Write to local file
+        pq.write_table(
+            table,
+            file_path,
+            compression=self.compression,
+            use_dictionary=True,
+            version="2.6",
+        )
+
+        file_size = file_path.stat().st_size
+        logger.info(
+            "Flushed %d batches to local: %s (%d rows, %d bytes)",
+            len(batches),
+            file_path,
+            table.num_rows,
+            file_size,
+        )
 
     def merge_files(self, period: Optional[str] = None) -> int:
         """

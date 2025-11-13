@@ -133,8 +133,8 @@ class RedisSource(DataSource):
             batch_size: Number of messages to accumulate per batch
 
         Yields:
-            Arrow RecordBatch containing the data, or None when no data is available
-            (to allow pipeline to check flush conditions without blocking)
+            Arrow RecordBatch containing the data with stream_key metadata, or None when no
+            data is available (to allow pipeline to check flush conditions without blocking)
         """
         if not self.client:
             raise RuntimeError("Not connected. Call connect() first.")
@@ -142,29 +142,57 @@ class RedisSource(DataSource):
         with tracer.start_as_current_span("redis_read_batch"):
             # Continuously read and yield batches if continuous mode is enabled
             while True:
-                messages = []
+                # Group messages by stream_key/list_key
+                messages_by_key = {}
 
                 # Read from streams if configured
                 if self.stream_keys:
-                    messages.extend(self._read_from_streams(batch_size))
+                    stream_messages = self._read_from_streams(batch_size)
+                    for key, msgs in stream_messages.items():
+                        if key not in messages_by_key:
+                            messages_by_key[key] = []
+                        messages_by_key[key].extend(msgs)
 
                 # Read from lists if configured
                 if self.list_keys:
-                    messages.extend(self._read_from_lists(batch_size - len(messages)))
+                    list_messages = self._read_from_lists(
+                        batch_size - sum(len(msgs) for msgs in messages_by_key.values())
+                    )
+                    for key, msgs in list_messages.items():
+                        if key not in messages_by_key:
+                            messages_by_key[key] = []
+                        messages_by_key[key].extend(msgs)
 
-                if messages:
+                if messages_by_key:
                     if self.value_format == "json":
-                        batch = self._json_to_arrow_batch(messages)
-                        logger.debug("Created batch with %d records", len(messages))
-                        yield batch
+                        # Yield a batch for each stream_key/list_key
+                        for stream_key, messages in messages_by_key.items():
+                            batch = self._json_to_arrow_batch(messages, stream_key)
+                            logger.debug(
+                                "Created batch with %d records from %s", len(messages), stream_key
+                            )
+                            yield batch
                     elif self.value_format == "arrow_ipc":
-                        # Process Arrow IPC messages
-                        for msg in messages:
-                            try:
-                                reader = pa.ipc.open_stream(msg)
-                                yield from reader
-                            except Exception as e:
-                                logger.error("Error processing Arrow IPC message: %s", e)
+                        # Process Arrow IPC messages and add stream_key metadata
+                        for stream_key, messages in messages_by_key.items():
+                            for msg in messages:
+                                try:
+                                    reader = pa.ipc.open_stream(msg)
+                                    for batch in reader:
+                                        # Add stream_key metadata to the batch
+                                        schema_with_metadata = batch.schema.with_metadata(
+                                            {
+                                                **(batch.schema.metadata or {}),
+                                                b"stream_key": stream_key.encode(),
+                                            }
+                                        )
+                                        arrays = [batch.column(i) for i in range(batch.num_columns)]
+                                        batch_with_metadata = pa.record_batch(
+                                            arrays, schema=schema_with_metadata
+                                        )
+                                        yield batch_with_metadata
+                                except Exception as e:
+                                    logger.error("Error processing Arrow IPC message: %s", e)
                 else:
                     # Yield None when no data is available to allow pipeline to check flush conditions
                     # This makes read_batch non-blocking so time-based flushes can be checked
@@ -176,9 +204,14 @@ class RedisSource(DataSource):
                 if not self.continuous:
                     break
 
-    def _read_from_streams(self, batch_size: int) -> list:
-        """Read messages from Redis streams using consumer groups."""
-        messages = []
+    def _read_from_streams(self, batch_size: int) -> dict:
+        """
+        Read messages from Redis streams using consumer groups.
+
+        Returns:
+            Dictionary mapping stream_key to list of messages
+        """
+        messages_by_key = {}
         message_ids_to_ack = []  # Track message IDs for acknowledgment
 
         try:
@@ -201,17 +234,20 @@ class RedisSource(DataSource):
                         stream_key.decode() if isinstance(stream_key, bytes) else stream_key
                     )
 
+                    if stream_key_str not in messages_by_key:
+                        messages_by_key[stream_key_str] = []
+
                     for msg_id, msg_data in stream_messages:
                         msg_id_str = msg_id.decode() if isinstance(msg_id, bytes) else msg_id
 
                         # Track message ID and stream for acknowledgment
                         message_ids_to_ack.append((stream_key_str, msg_id_str))
 
-                        # Extract message value
+                        # Extract message value and group by stream_key
                         if b"value" in msg_data:
-                            messages.append(msg_data[b"value"])
+                            messages_by_key[stream_key_str].append(msg_data[b"value"])
                         elif "value" in msg_data:
-                            messages.append(msg_data["value"])
+                            messages_by_key[stream_key_str].append(msg_data["value"])
 
                 # Acknowledge all messages after successful reading
                 if message_ids_to_ack:
@@ -232,11 +268,16 @@ class RedisSource(DataSource):
         except Exception as e:
             logger.error("Error reading from Redis streams: %s", e, exc_info=True)
 
-        return messages
+        return messages_by_key
 
-    def _read_from_lists(self, batch_size: int) -> list:
-        """Read messages from Redis lists."""
-        messages = []
+    def _read_from_lists(self, batch_size: int) -> dict:
+        """
+        Read messages from Redis lists.
+
+        Returns:
+            Dictionary mapping list_key to list of messages
+        """
+        messages_by_key = {}
 
         try:
             for _ in range(batch_size):
@@ -248,18 +289,31 @@ class RedisSource(DataSource):
                 )
 
                 if result:
-                    _, value = result
-                    messages.append(value)
+                    list_key, value = result
+                    list_key_str = list_key.decode() if isinstance(list_key, bytes) else list_key
+
+                    if list_key_str not in messages_by_key:
+                        messages_by_key[list_key_str] = []
+                    messages_by_key[list_key_str].append(value)
                 else:
                     break  # Timeout, no more messages
 
         except Exception as e:
             logger.error("Error reading from Redis lists: %s", e, exc_info=True)
 
-        return messages
+        return messages_by_key
 
-    def _json_to_arrow_batch(self, messages: list) -> pa.RecordBatch:
-        """Convert a list of JSON messages to Arrow RecordBatch."""
+    def _json_to_arrow_batch(self, messages: list, stream_key: str) -> pa.RecordBatch:
+        """
+        Convert a list of JSON messages to Arrow RecordBatch with stream_key metadata.
+
+        Args:
+            messages: List of JSON messages
+            stream_key: Redis stream key or list key
+
+        Returns:
+            Arrow RecordBatch with stream_key stored in schema metadata
+        """
         parsed_messages = []
 
         for msg in messages:
@@ -274,11 +328,21 @@ class RedisSource(DataSource):
 
         if parsed_messages:
             table = pa.Table.from_pylist(parsed_messages)
+            # Add stream_key metadata to schema
+            schema_with_metadata = table.schema.with_metadata({b"stream_key": stream_key.encode()})
+            # Rebuild table with metadata
+            table = pa.table(table.to_pydict(), schema=schema_with_metadata)
             if table.num_rows > 0:
                 return table.to_batches()[0]
-            return pa.record_batch([], schema=pa.schema([]))
+            # Return empty batch with metadata
+            return pa.record_batch(
+                [], schema=pa.schema([], metadata={b"stream_key": stream_key.encode()})
+            )
 
-        return pa.record_batch([], schema=pa.schema([]))
+        # Return empty batch with metadata
+        return pa.record_batch(
+            [], schema=pa.schema([], metadata={b"stream_key": stream_key.encode()})
+        )
 
     def close(self) -> None:
         """Close the Redis connection."""

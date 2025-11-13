@@ -193,8 +193,13 @@ def test_redis_source_mixed_streams_and_lists(mock_redis_client):
 
     batches = list(source.read_batch(batch_size=10))
 
-    assert len(batches) == 1
-    assert batches[0].num_rows == 2  # One from stream, one from list
+    # Now returns separate batches for each stream_key/list_key
+    assert len(batches) == 2
+    # Verify stream_key metadata is present
+    assert batches[0].schema.metadata.get(b"stream_key") in [b"stream1", b"list1"]
+    assert batches[1].schema.metadata.get(b"stream_key") in [b"stream1", b"list1"]
+    # Verify total rows
+    assert batches[0].num_rows + batches[1].num_rows == 2
 
     source.close()
 
