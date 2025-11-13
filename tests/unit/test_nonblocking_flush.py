@@ -148,20 +148,28 @@ def test_continuous_redis_yields_none_when_no_data():
     """Test that Redis source in continuous mode yields None when no data."""
     from unittest.mock import MagicMock, patch
 
+    import redis
+
     from fs_data_sink.sources import RedisSource
 
     mock_client = MagicMock()
-    mock_client.xread.side_effect = [
+    mock_client.xreadgroup.side_effect = [
         [(b"stream1", [(b"1-0", {b"value": b'{"id": 1}'})])],  # First call returns data
         [],  # Second call returns no data
         [],  # Third call returns no data
     ]
+    # Mock xgroup_create to simulate group already exists
+    mock_client.xgroup_create.side_effect = redis.exceptions.ResponseError(
+        "BUSYGROUP Consumer Group name already exists"
+    )
 
     with patch("fs_data_sink.sources.redis_source.redis.Redis", return_value=mock_client):
         source = RedisSource(
             host="localhost",
             stream_keys=["stream1"],
             continuous=True,
+            consumer_group="test-group",
+            consumer_name="test-consumer",
         )
         source.connect()
 

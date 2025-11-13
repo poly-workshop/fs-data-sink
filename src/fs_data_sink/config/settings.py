@@ -27,6 +27,8 @@ class SourceConfig:
     stream_keys: Optional[list[str]] = None
     list_keys: Optional[list[str]] = None
     continuous: bool = True
+    consumer_group: Optional[str] = None
+    consumer_name: Optional[str] = None
 
     # Common
     value_format: str = "json"
@@ -126,6 +128,9 @@ def _load_ini_file(config_path: str) -> dict:
             # Handle boolean values
             elif key in ("continuous",):
                 config_data["source"][key] = config.getboolean("source", key)
+            # Handle string values that could be None/null
+            elif key in ("consumer_group", "consumer_name") and value.lower() in ("null", "none", ""):
+                config_data["source"][key] = None
             else:
                 config_data["source"][key] = value
 
@@ -232,6 +237,10 @@ def _apply_env_overrides(config_data: dict) -> None:
         source["stream_keys"] = os.getenv("REDIS_STREAM_KEYS").split(",")
     if os.getenv("REDIS_CONTINUOUS"):
         source["continuous"] = os.getenv("REDIS_CONTINUOUS").lower() in ("true", "1", "yes")
+    if os.getenv("REDIS_CONSUMER_GROUP"):
+        source["consumer_group"] = os.getenv("REDIS_CONSUMER_GROUP")
+    if os.getenv("REDIS_CONSUMER_NAME"):
+        source["consumer_name"] = os.getenv("REDIS_CONSUMER_NAME")
 
     # Sink overrides
     sink = config_data.setdefault("sink", {})

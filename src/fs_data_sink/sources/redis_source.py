@@ -33,6 +33,8 @@ class RedisSource(DataSource):
         block_timeout: int = 1000,
         continuous: bool = True,
         redis_config: Optional[dict] = None,
+        consumer_group: Optional[str] = None,
+        consumer_name: Optional[str] = None,
     ):
         """
         Initialize Redis source.
@@ -48,6 +50,8 @@ class RedisSource(DataSource):
             block_timeout: Timeout in milliseconds for blocking operations
             continuous: If True, continuously consume data in a loop; if False, read once and stop
             redis_config: Additional Redis configuration
+            consumer_group: Consumer group name (required for Redis Streams)
+            consumer_name: Consumer name within the group (defaults to hostname if not provided)
         """
         self.host = host
         self.port = port
@@ -59,8 +63,10 @@ class RedisSource(DataSource):
         self.block_timeout = block_timeout
         self.continuous = continuous
         self.redis_config = redis_config or {}
+        self.consumer_group = consumer_group
+        self.consumer_name = consumer_name
         self.client: Optional[redis.Redis] = None
-        self.stream_ids: dict[str, str] = dict.fromkeys(self.stream_keys, "0")
+        self.stream_ids: dict[str, str] = dict.fromkeys(self.stream_keys, ">")
 
     def connect(self) -> None:
         """Establish connection to Redis."""
@@ -68,6 +74,10 @@ class RedisSource(DataSource):
             logger.info(
                 "Connecting to Redis: host=%s, port=%s, db=%s", self.host, self.port, self.db
             )
+
+            # Validate that consumer_group is provided if using streams
+            if self.stream_keys and not self.consumer_group:
+                raise ValueError("consumer_group is required when using Redis Streams")
 
             self.client = redis.Redis(
                 host=self.host,
@@ -81,6 +91,39 @@ class RedisSource(DataSource):
             # Test connection
             self.client.ping()
             logger.info("Successfully connected to Redis")
+
+            # Set default consumer name if not provided
+            if self.stream_keys and not self.consumer_name:
+                import socket
+
+                self.consumer_name = f"{socket.gethostname()}-{id(self)}"
+                logger.info("Using default consumer name: %s", self.consumer_name)
+
+            # Create consumer groups for streams if they don't exist
+            if self.stream_keys and self.consumer_group:
+                for stream_key in self.stream_keys:
+                    try:
+                        # Try to create the consumer group
+                        # Start from the beginning ('0') to consume all messages
+                        # Use mkstream=True to create stream if it doesn't exist
+                        self.client.xgroup_create(
+                            name=stream_key, groupname=self.consumer_group, id="0", mkstream=True
+                        )
+                        logger.info(
+                            "Created consumer group '%s' for stream '%s'",
+                            self.consumer_group,
+                            stream_key,
+                        )
+                    except redis.exceptions.ResponseError as e:
+                        # Group already exists, which is fine
+                        if "BUSYGROUP" in str(e):
+                            logger.info(
+                                "Consumer group '%s' already exists for stream '%s'",
+                                self.consumer_group,
+                                stream_key,
+                            )
+                        else:
+                            raise
 
     def read_batch(self, batch_size: int = 1000) -> Iterator[Optional[pa.RecordBatch]]:
         """
@@ -134,29 +177,57 @@ class RedisSource(DataSource):
                     break
 
     def _read_from_streams(self, batch_size: int) -> list:
-        """Read messages from Redis streams."""
+        """Read messages from Redis streams using consumer groups."""
         messages = []
+        message_ids_to_ack = []  # Track message IDs for acknowledgment
 
         try:
-            # Prepare stream IDs for XREAD
-            streams = {key: self.stream_ids[key] for key in self.stream_keys}
+            # Prepare stream IDs for XREADGROUP
+            # Use ">" to receive messages never delivered to other consumers
+            streams = dict.fromkeys(self.stream_keys, ">")
 
-            # Read from all streams
-            results = self.client.xread(streams=streams, count=batch_size, block=self.block_timeout)
+            # Read from all streams using consumer group
+            results = self.client.xreadgroup(
+                groupname=self.consumer_group,
+                consumername=self.consumer_name,
+                streams=streams,
+                count=batch_size,
+                block=self.block_timeout,
+            )
 
             if results:
                 for stream_key, stream_messages in results:
+                    stream_key_str = (
+                        stream_key.decode() if isinstance(stream_key, bytes) else stream_key
+                    )
+
                     for msg_id, msg_data in stream_messages:
-                        # Update last read ID
-                        key = stream_key.decode() if isinstance(stream_key, bytes) else stream_key
                         msg_id_str = msg_id.decode() if isinstance(msg_id, bytes) else msg_id
-                        self.stream_ids[key] = msg_id_str
+
+                        # Track message ID and stream for acknowledgment
+                        message_ids_to_ack.append((stream_key_str, msg_id_str))
 
                         # Extract message value
                         if b"value" in msg_data:
                             messages.append(msg_data[b"value"])
                         elif "value" in msg_data:
                             messages.append(msg_data["value"])
+
+                # Acknowledge all messages after successful reading
+                if message_ids_to_ack:
+                    for stream_key, msg_id in message_ids_to_ack:
+                        try:
+                            self.client.xack(stream_key, self.consumer_group, msg_id)
+                            logger.debug(
+                                "Acknowledged message %s from stream %s", msg_id, stream_key
+                            )
+                        except Exception as ack_error:
+                            logger.error(
+                                "Error acknowledging message %s from stream %s: %s",
+                                msg_id,
+                                stream_key,
+                                ack_error,
+                            )
 
         except Exception as e:
             logger.error("Error reading from Redis streams: %s", e, exc_info=True)
