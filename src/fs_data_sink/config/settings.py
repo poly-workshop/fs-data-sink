@@ -129,7 +129,11 @@ def _load_ini_file(config_path: str) -> dict:
             elif key in ("continuous",):
                 config_data["source"][key] = config.getboolean("source", key)
             # Handle string values that could be None/null
-            elif key in ("consumer_group", "consumer_name") and value.lower() in ("null", "none", ""):
+            elif key in ("consumer_group", "consumer_name") and value.lower() in (
+                "null",
+                "none",
+                "",
+            ):
                 config_data["source"][key] = None
             else:
                 config_data["source"][key] = value

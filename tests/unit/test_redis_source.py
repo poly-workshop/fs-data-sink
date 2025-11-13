@@ -17,7 +17,9 @@ def mock_redis_client():
         client = MagicMock()
         mock.return_value = client
         # Mock xgroup_create to simulate group already exists
-        client.xgroup_create.side_effect = redis.exceptions.ResponseError("BUSYGROUP Consumer Group name already exists")
+        client.xgroup_create.side_effect = redis.exceptions.ResponseError(
+            "BUSYGROUP Consumer Group name already exists"
+        )
         yield client
 
 
