@@ -49,6 +49,9 @@ class MockSink(DataSink):
     def flush(self):
         pass
 
+    def merge_files(self, period=None):
+        return 0
+
     def close(self):
         self.connected = False
 

@@ -100,6 +100,10 @@ class DataPipeline:
                 compression=sink_config.compression,
                 partition_by=sink_config.partition_by,
                 s3_config=sink_config.extra_config,
+                merge_enabled=sink_config.merge_enabled,
+                merge_period=sink_config.merge_period,
+                merge_min_files=sink_config.merge_min_files,
+                merge_on_flush=sink_config.merge_on_flush,
             )
 
         if sink_config.type == "hdfs":
@@ -113,6 +117,10 @@ class DataPipeline:
                 compression=sink_config.compression,
                 partition_by=sink_config.partition_by,
                 hdfs_config=sink_config.extra_config,
+                merge_enabled=sink_config.merge_enabled,
+                merge_period=sink_config.merge_period,
+                merge_min_files=sink_config.merge_min_files,
+                merge_on_flush=sink_config.merge_on_flush,
             )
 
         if sink_config.type == "local":
@@ -123,6 +131,10 @@ class DataPipeline:
                 base_path=sink_config.base_path,
                 compression=sink_config.compression,
                 partition_by=sink_config.partition_by,
+                merge_enabled=sink_config.merge_enabled,
+                merge_period=sink_config.merge_period,
+                merge_min_files=sink_config.merge_min_files,
+                merge_on_flush=sink_config.merge_on_flush,
             )
 
         raise ValueError(f"Unsupported sink type: {sink_config.type}")

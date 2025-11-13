@@ -327,6 +327,73 @@ Environment variables:
 - `PIPELINE_FLUSH_INTERVAL_SECONDS`: Flush interval in seconds
 - `PIPELINE_FLUSH_INTERVAL_BATCHES`: Flush interval in batches
 
+### File Merging Configuration
+
+The sink can automatically merge small Parquet files into larger consolidated files based on configured time periods (hourly, daily, weekly, monthly). This reduces the number of small files and improves query performance.
+
+```yaml
+sink:
+  type: s3  # or hdfs, local
+  bucket: my-bucket
+  prefix: raw-data
+  compression: snappy
+  partition_by:
+    - date
+  # File merging configuration
+  merge_enabled: true              # Enable automatic file merging
+  merge_period: hour               # Time period for grouping files: 'hour', 'day', 'week', 'month'
+  merge_min_files: 2               # Minimum number of files required to trigger a merge
+  merge_on_flush: false            # Whether to merge files during flush operations
+```
+
+**Merge Behavior:**
+- Files are grouped by their timestamp (extracted from filename) and configured period
+- Only groups with at least `merge_min_files` files will be merged
+- Merged files are named with the pattern `merged_{period_key}.parquet` (e.g., `merged_20241113_06.parquet` for hourly)
+- Original files are deleted after successful merge
+- Already merged files are skipped in subsequent merge operations
+
+**Merge Periods:**
+- **hour**: Merges files created within the same hour (e.g., all files from 2024-11-13 06:00-06:59)
+- **day**: Merges files created within the same day (e.g., all files from 2024-11-13)
+- **week**: Merges files created within the same ISO week (e.g., week 46 of 2024)
+- **month**: Merges files created within the same month (e.g., November 2024)
+
+**Merge Triggers:**
+- **Manual**: Call `sink.merge_files()` explicitly
+- **On flush**: Set `merge_on_flush: true` to merge after each flush operation
+- **Scheduled**: Run merge as a separate scheduled job/cron
+
+Example configurations:
+
+```yaml
+# Hourly merge (merge files from each hour)
+sink:
+  merge_enabled: true
+  merge_period: hour
+  merge_min_files: 5
+  merge_on_flush: false
+
+# Daily merge (merge files from each day)
+sink:
+  merge_enabled: true
+  merge_period: day
+  merge_min_files: 10
+  merge_on_flush: true
+```
+
+**Benefits:**
+- Reduces the number of small files (Small File Problem)
+- Improves query performance in analytics databases
+- Better resource utilization in distributed systems (Spark, Presto, Hive)
+- Reduced metadata overhead
+
+Environment variables:
+- `SINK_MERGE_ENABLED`: Enable file merging (true/false)
+- `SINK_MERGE_PERIOD`: Merge period (hour/day/week/month)
+- `SINK_MERGE_MIN_FILES`: Minimum files to trigger merge
+- `SINK_MERGE_ON_FLUSH`: Merge on flush (true/false)
+
 ## Data Formats
 
 ### JSON Format

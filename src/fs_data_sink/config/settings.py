@@ -62,6 +62,12 @@ class SinkConfig:
     partition_by: Optional[list[str]] = None
     extra_config: dict = field(default_factory=dict)
 
+    # Merge configuration
+    merge_enabled: bool = False
+    merge_period: str = "hour"  # 'hour', 'day', 'week', 'month'
+    merge_min_files: int = 2  # Minimum files to trigger merge
+    merge_on_flush: bool = False  # Merge during flush operations
+
 
 @dataclass
 class TelemetryConfig:
@@ -144,6 +150,12 @@ def _load_ini_file(config_path: str) -> dict:
             # Handle list values
             if key in ("partition_by",):
                 config_data["sink"][key] = [v.strip() for v in value.split(",") if v.strip()]
+            # Handle integer values
+            elif key in ("merge_min_files",):
+                config_data["sink"][key] = config.getint("sink", key)
+            # Handle boolean values
+            elif key in ("merge_enabled", "merge_on_flush"):
+                config_data["sink"][key] = config.getboolean("sink", key)
             else:
                 config_data["sink"][key] = value
 
@@ -271,6 +283,16 @@ def _apply_env_overrides(config_data: dict) -> None:
         sink["base_path"] = os.getenv("HDFS_BASE_PATH")
     if os.getenv("HDFS_USER"):
         sink["user"] = os.getenv("HDFS_USER")
+
+    # Merge configuration
+    if os.getenv("SINK_MERGE_ENABLED"):
+        sink["merge_enabled"] = os.getenv("SINK_MERGE_ENABLED").lower() in ("true", "1", "yes")
+    if os.getenv("SINK_MERGE_PERIOD"):
+        sink["merge_period"] = os.getenv("SINK_MERGE_PERIOD")
+    if os.getenv("SINK_MERGE_MIN_FILES"):
+        sink["merge_min_files"] = int(os.getenv("SINK_MERGE_MIN_FILES"))
+    if os.getenv("SINK_MERGE_ON_FLUSH"):
+        sink["merge_on_flush"] = os.getenv("SINK_MERGE_ON_FLUSH").lower() in ("true", "1", "yes")
 
     # Telemetry overrides
     telemetry = config_data.setdefault("telemetry", {})
